@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NS ALOC · NSTech</title>
+<!-- Firebase: autenticação + sincronização em nuvem em tempo real (mesmo molde do projeto de Capacitação) -->
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<!-- SheetJS: leitura de arquivos XLSX/CSV/TSV para a importação da Base de Dados -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<!-- Lucide Icons: sistema unificado de ícones SVG -->
+<script src="https://cdn.jsdelivr.net/npm/lucide@0.469.0/dist/umd/lucide.min.js"></script>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<!-- ===== Tela de login (cobre tudo até autenticar) ===== -->
+<div id="authScreen">
+  <div class="auth-card">
+    <div class="auth-brand">NS ALOC</div>
+    <div class="auth-subtitle" id="authSubtitle">NSTech · Gestão de Implantação</div>
+    <div class="auth-fields" id="authFields">
+      <div class="field-group">
+        <label for="authEmail">E-mail</label>
+        <input id="authEmail" type="email" autocomplete="username" placeholder="seu@email.com">
+      </div>
+      <div class="field-group">
+        <label for="authPass">Senha</label>
+        <input id="authPass" type="password" autocomplete="current-password" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()">
+      </div>
+      <div class="auth-err" id="authError"></div>
+      <button class="auth-submit" id="authLoginBtn">Entrar</button>
+    </div>
+    <div class="auth-foot">Acesso restrito<span class="sep">·</span>Sistema interno NSTech</div>
+  </div>
+</div>
+
+<!-- ===== Modal de conexão Firebase (acessível antes do login) ===== -->
+<div class="overlay" id="cfgOverlay">
+  <div class="modal big">
+    <div class="modal-h">
+      <div><div class="t"><i data-lucide="cloud"></i>Conexão com a nuvem</div><div class="s">Cole o <b>firebaseConfig</b> do Console do Firebase (⚙️ → Configurações do projeto → Seus apps · Web).</div></div>
+      <button class="x" id="cfgClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="act-body">
+      <div class="cfg-grid">
+        <div class="full"><label>Colar firebaseConfig</label><textarea id="cfgPaste" placeholder="Cole aqui o objeto firebaseConfig copiado do Console..." oninput="parseConfigText()"></textarea></div>
+        <div><label>apiKey</label><input id="cfgApiKey" placeholder="AIza..."></div>
+        <div><label>authDomain</label><input id="cfgAuthDomain" placeholder="projeto.firebaseapp.com"></div>
+        <div class="full"><label>databaseURL <b style="color:var(--proj)">(obrigatório)</b></label><input id="cfgDatabaseURL" placeholder="https://...firebasedatabase.app"></div>
+        <div><label>projectId</label><input id="cfgProjectId" placeholder="meu-projeto"></div>
+        <div><label>storageBucket</label><input id="cfgStorageBucket" placeholder="projeto.appspot.com"></div>
+        <div><label>messagingSenderId</label><input id="cfgMessagingSenderId" placeholder="000000000000"></div>
+        <div><label>appId</label><input id="cfgAppId" placeholder="1:000...:web:..."></div>
+      </div>
+      <div class="cfg-status" id="cfgStatus"></div>
+    </div>
+    <div class="modal-f">
+      <button class="btn primary" id="cfgSave">Conectar e salvar</button>
+      <button class="btn" id="cfgCopy">Copiar minha config</button>
+      <button class="btn danger" id="cfgClear">Restaurar padrão</button>
+    </div>
+  </div>
+</div>
+
+<div class="app">
+
+<!-- ===== SIDEBAR (navegação principal) ===== -->
+<aside class="sidebar" id="sidebar">
+  <div class="sb-brand">
+    <div class="logomark"><span>n</span></div>
+    <div class="wm">
+      <div class="pname">NS ALOC</div>
+      <div class="ptag">NSTech · Gestão de Implantação</div>
+    </div>
+  </div>
+
+  <nav class="sb-nav" id="sbNav">
+    <div class="sb-section">Início</div>
+    <button class="sb-link" data-nav="home"><i data-lucide="layout-dashboard"></i>Visão geral</button>
+
+    <div class="sb-section">Planejamento</div>
+    <button class="sb-link" data-nav="grade"><i data-lucide="layout-grid"></i>Grade</button>
+    <button class="sb-link" id="incluirAlocBtn"><i data-lucide="plus-circle"></i>Incluir alocação</button>
+
+    <div class="sb-section">Análise</div>
+    <button class="sb-link" data-nav="torre"><i data-lucide="radar"></i>Torre de controle</button>
+    <button class="sb-link" data-nav="esteira" id="esteiraBtn"><i data-lucide="route"></i>Esteira de Projetos</button>
+    <button class="sb-link" data-nav="discovery" id="discoveryBtn"><i data-lucide="search"></i>Linha do Tempo - Discovery</button>
+    <button class="sb-link" id="reportsBtn"><i data-lucide="file-bar-chart-2"></i>Relatórios</button>
+    <button class="sb-link" id="kpisBtn"><i data-lucide="line-chart"></i>KPIs</button>
+
+    <div class="sb-section">Gestão</div>
+    <button class="sb-link" id="acoesBtn"><i data-lucide="settings-2"></i>Ações &amp; Cadastros</button>
+  </nav>
+
+  <div class="sb-context" id="sbContext"></div>
+
+  <div class="sb-user" id="sbUser">
+    <div class="uav" id="sbUserAv">?</div>
+    <div class="uinfo">
+      <div class="uname" id="userLabel">—</div>
+      <div class="urole"><span id="roleLabel">leitura</span> · <span class="ver" id="footVersion">v—</span></div>
+      <div id="syncBadge" class="syncline" title="Clique para configurar a nuvem">⚪ Sem nuvem</div>
+    </div>
+    <button class="ulog" id="logoutBtn" title="Sair"><i data-lucide="log-out" class="icon-16"></i></button>
+  </div>
+</aside>
+
+<div class="main" id="appMain" data-screen="home">
+
+<!-- ===== HOME / VISÃO GERAL (landing) — Fase 1 da remanufatura ===== -->
+<section id="screenHome">
+  <div class="home-top">
+    <div>
+      <div class="home-title">Visão geral</div>
+      <div class="home-sub" id="homeSub">Gestão de implantação</div>
+    </div>
+    <button class="home-cta" onclick="el('incluirAlocBtn').click()"><i data-lucide="plus-circle"></i>Incluir alocação</button>
+  </div>
+  <div class="home-eyebrow">Onde você quer ir</div>
+  <div class="home-cards" id="homeCards"></div>
+</section>
+
+<!-- ===== TORRE DE CONTROLE (Fase 2) — consolida dashboards de Esteira e Discovery ===== -->
+<section id="screenTorre">
+  <div class="page-head">
+    <div>
+      <div class="page-title">Torre de controle</div>
+      <div class="page-sub">Análise · monitoramento de implantação</div>
+    </div>
+    <div class="torre-tabs" id="torreTabs">
+      <button data-tv="panorama" class="on" onclick="irTorre('panorama')">Panorama</button>
+      <button data-tv="esteira" onclick="irTorre('esteira')">Esteira</button>
+      <button data-tv="discovery" onclick="irTorre('discovery')">Discovery</button>
+      <button data-tv="alertas" onclick="irTorre('alertas')">Alertas</button>
+      <button data-tv="aderencia" onclick="irTorre('aderencia')">BI Previsto × Realizado V2</button>
+      <button data-tv="alertasDetalhados" onclick="irTorre('alertasDetalhados')">Alertas detalhados</button>
+    </div>
+  </div>
+  <div id="torreBody"></div>
+</section>
+
+<!-- ===== HEADER (controles operacionais da grade) ===== -->
+<header>
+  <div class="bar">
+    <button class="nav-toggle" id="navToggle" title="Menu"><i data-lucide="menu"></i></button>
+    <div class="crumbs">
+      <span class="ctitle" id="headerTitle">Grade de Alocação</span>
+      <span class="csep">·</span>
+      <span class="ctag" id="tagText">Implantação</span>
+    </div>
+
+    <div class="field scope-toggle" id="scopeToggleWrap" style="display:none">
+      <label>Escopo</label>
+      <div class="segctl" id="scopeSeg">
+        <button data-vm="meus" class="on" title="Ver apenas o meu escopo (edição permitida)"><i data-lucide="user" class="icon-14"></i>Meus</button>
+        <button data-vm="geral" title="Ver todos (somente leitura)"><i data-lucide="globe" class="icon-14"></i>Geral</button>
+      </div>
+    </div>
+
+    <div class="field">
+      <label>Visão</label>
+      <div class="segctl" id="viewSeg">
+        <button data-v="analista" class="on">Por analista</button>
+        <button data-v="geral">Geral</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>Período</label>
+      <div class="segctl" id="periodSeg">
+        <button data-p="dia">Dia</button>
+        <button data-p="semana" class="on">Semana</button>
+        <button data-p="mes">Mês</button>
+      </div>
+    </div>
+    <div class="field" id="consultorField">
+      <label>Consultor</label>
+      <div class="select-wrap"><select id="selConsultor"></select></div>
+    </div>
+    <div class="field" id="projFilterField">
+      <label>Projeto</label>
+      <div class="select-wrap"><select id="selProjFilter" title="Filtra a grade pelos analistas alocados no projeto"></select></div>
+    </div>
+    <div class="field">
+      <label id="navLabel">Semana</label>
+      <div class="weeknav">
+        <button id="prevWk" title="Anterior"><i data-lucide="chevron-left" class="icon-16"></i></button>
+        <div class="weeklabel" id="weekLabel"><small>semana</small>—</div>
+        <button id="nextWk" title="Próximo"><i data-lucide="chevron-right" class="icon-16"></i></button>
+      </div>
+    </div>
+    <div class="field" id="previstoField">
+      <label>Previsto</label>
+      <div class="segctl" id="previstoSeg">
+        <button data-pv="on" class="on" title="Mostrar a camada de previsto (ghost) e marcadores de conflito">Mostrar</button>
+        <button data-pv="off" title="Ocultar a camada de previsto">Ocultar</button>
+      </div>
+    </div>
+    <button class="today-btn" id="conflitosBtn" title="Conflitos previsto × realizado"><i data-lucide="git-compare-arrows" class="icon-14"></i>Conflitos<span class="conf-badge" id="conflBadge" style="display:none">0</span></button>
+    <button class="today-btn" id="gerarPrevBtn" title="Gerar pré-alocação (previsto) a partir do cronograma do projeto"><i data-lucide="calendar-plus" class="icon-14"></i>Gerar previsto</button>
+    <button class="today-btn" id="todayBtn"><i data-lucide="calendar-clock" class="icon-14"></i>Hoje</button>
+  </div>
+</header>
+
+<div id="readonlyBanner" class="readonly-banner" style="display:none">
+  <i data-lucide="eye"></i>
+  Você está em <b>Visão Geral</b> — vendo dados de toda a operação em <b>somente leitura</b>. Para editar, alterne para <b>Meus</b>.
+</div>
+
+<div class="subhead">
+  <div class="who">
+    <div class="avatar" id="avatar">—</div>
+    <div>
+      <h1 id="consultorName">—</h1>
+      <div class="lider" id="liderLine"></div>
+    </div>
+  </div>
+  <div class="stats" id="stats"></div>
+</div>
+
+<div class="wrap">
+  <div id="boardHost"><div class="loading">Carregando…</div></div>
+  <div class="legend">
+    <div class="it"><span class="sw c-proj"></span>Implantação</div>
+    <div class="it"><span class="sw c-dsc"></span>Discovery</div>
+    <div class="it"><span class="sw c-rot"></span>Interna (rotina)</div>
+    <div class="it"><span class="sw c-svc"></span>Service</div>
+    <div class="it"><span class="sw c-int"></span>Interna (capacitação)</div>
+    <div class="it"><span class="sw c-aus"></span>Ausência</div>
+    <div class="it"><span class="sw c-livre"></span>Livre</div>
+    <div class="it"><span class="sw" style="background:repeating-linear-gradient(45deg,var(--o-50),var(--o-50) 5px,#fff 5px,#fff 10px);border:1px dashed var(--o-300)"></span>Previsto (não realizado)</div>
+    <div class="it"><span class="sw" style="background:#fff;border:1.5px solid #d12b2b;position:relative"></span>Conflito previsto × realizado</div>
+  </div>
+  <div class="foot">
+    <span class="src">Cadastros (Ações) são a fonte de dados · sincronizado em tempo real na nuvem (Firebase) · acesso por perfil.</span>
+    <button class="link" id="resetBtn">Restaurar dados de exemplo</button>
+  </div>
+</div>
+
+</div><!-- /.main -->
+</div><!-- /.app -->
+
+<!-- modal: alocar célula -->
+<!-- Modal de CONSULTA do slot (read-only) -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="modal-h">
+      <div><div class="t" id="mTitle"><i data-lucide="info"></i>Detalhes do slot</div><div class="s" id="mSub"></div></div>
+      <button class="x" id="mClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="modal-b">
+      <div id="consultBody" style="display:flex;flex-direction:column;gap:14px">
+        <!-- preenchido dinamicamente -->
+      </div>
+    </div>
+    <div class="modal-f">
+      <button class="btn primary wide" id="mAlterar"><i data-lucide="pencil"></i>Alterar/Sobrescrever este slot</button>
+      <button class="btn" id="mLiberar" style="display:none"><i data-lucide="eraser"></i>Liberar slot (tornar livre)</button>
+      <button class="btn" id="mFechar"><i data-lucide="x"></i>Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal de INCLUIR ALOCAÇÃO (fluxo novo) -->
+<div class="overlay" id="incOverlay">
+  <div class="modal">
+    <div class="modal-h">
+      <div><div class="t"><i data-lucide="plus-circle"></i>Incluir alocação</div><div class="s" id="incSub">Lançamento manual de alocação para qualquer analista, data e slot</div></div>
+      <button class="x" id="incClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="modal-b">
+      <div class="f"><label>Analista <span style="color:var(--proj)">*</span></label><select id="iAnalista"></select></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <div class="f" style="flex:1;min-width:140px"><label>Data <span style="color:var(--proj)">*</span></label><input type="date" id="iData" style="width:100%;background:#fff;border:1px solid var(--line2);border-radius:10px;padding:10px 12px;font-size:13.5px"></div>
+        <div class="f" style="flex:1;min-width:140px"><label>Slot <span style="color:var(--proj)">*</span></label><select id="iSlot"></select></div>
+      </div>
+      <div class="f"><label>Atividade <span style="color:var(--proj)">*</span></label><select id="iAtividade"></select></div>
+      <div class="f" id="iClienteWrap"><label>Cliente / Projeto</label><select id="iCliente"></select></div>
+      <div class="f"><label id="iObsLabel">Observação do slot <span style="color:var(--faint);font-weight:500">(opcional, máx. 1000)</span></label>
+        <textarea id="iObs" rows="3" maxlength="1000" placeholder="Detalhes específicos deste lançamento (ex.: foco em programação de embarque)" style="width:100%;background:#fff;border:1px solid var(--line2);border-radius:10px;padding:10px 12px;font-family:inherit;font-size:13px;resize:vertical"></textarea>
+      </div>
+      <div id="iAvisos" class="hint" style="display:none;color:var(--warn)"></div>
+      <details id="iBulkPanel" style="background:#fff;border:1px solid var(--line);border-radius:var(--r-md);padding:0;overflow:hidden;margin-top:4px">
+        <summary style="cursor:pointer;padding:10px 14px;font-size:12.5px;font-weight:600;color:var(--muted);list-style:none;display:flex;align-items:center;gap:7px"><i data-lucide="copy-plus" class="icon-14"></i>Aplicar em lote (vários slots de uma vez)</summary>
+        <div style="padding:0 14px 14px;display:flex;flex-direction:column;gap:10px">
+          <button class="btn sm" id="iApplyDay" type="button"><i data-lucide="calendar-days"></i>Aplicar no dia inteiro (todos os slots desta data)</button>
+          <button class="btn sm" id="iApplyWeek" type="button"><i data-lucide="calendar-range"></i>Aplicar Seg–Sex (mesmo slot, semana toda)</button>
+          <div style="border-top:1px dashed var(--line);padding-top:10px">
+            <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:700;margin-bottom:7px">Aplicar em intervalo de datas (mesmo slot)</div>
+            <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap">
+              <div style="flex:1;min-width:130px"><label style="display:block;font-size:11px;color:var(--muted);font-weight:600;margin-bottom:3px">De</label><input type="date" id="iRangeFrom" style="width:100%;border:1px solid var(--line2);border-radius:var(--r-sm);padding:8px 10px;font-size:13px"></div>
+              <div style="flex:1;min-width:130px"><label style="display:block;font-size:11px;color:var(--muted);font-weight:600;margin-bottom:3px">Até</label><input type="date" id="iRangeTo" style="width:100%;border:1px solid var(--line2);border-radius:var(--r-sm);padding:8px 10px;font-size:13px"></div>
+            </div>
+            <button class="btn sm primary" id="iApplyRange" type="button" style="margin-top:8px"><i data-lucide="calendar-check-2"></i>Aplicar no intervalo (apenas dias úteis)</button>
+          </div>
+          <div style="border-top:1px dashed var(--line);padding-top:10px">
+            <div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--faint);font-weight:700;margin-bottom:3px;display:flex;align-items:center;gap:6px"><i data-lucide="repeat" class="icon-14"></i>Ritual / recorrência (slot × dia da semana × semanas)</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:8px">Repete a atividade no <b>slot selecionado acima</b>, nos dias da semana escolhidos, ao longo do período — respeitando a cadência (ex.: weekly toda quarta no Slot3).</div>
+            <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:5px">Dias da semana</div>
+            <div class="dow-row" id="iRitualDows">
+              <span class="dow-chip" data-wd="1">Seg</span><span class="dow-chip" data-wd="2">Ter</span><span class="dow-chip" data-wd="3">Qua</span><span class="dow-chip" data-wd="4">Qui</span><span class="dow-chip" data-wd="5">Sex</span>
+            </div>
+            <div style="display:flex;gap:8px;align-items:end;flex-wrap:wrap;margin-top:9px">
+              <div style="flex:1;min-width:120px"><label style="display:block;font-size:11px;color:var(--muted);font-weight:600;margin-bottom:3px">Cadência</label>
+                <select id="iRitualCad" style="width:100%;border:1px solid var(--line2);border-radius:var(--r-sm);padding:8px 10px;font-size:13px;background:#fff">
+                  <option value="1">Toda semana</option><option value="2">Quinzenal (a cada 2)</option><option value="3">A cada 3 semanas</option><option value="4">A cada 4 semanas</option>
+                </select>
+              </div>
+              <div style="flex:1;min-width:120px"><label style="display:block;font-size:11px;color:var(--muted);font-weight:600;margin-bottom:3px">De</label><input type="date" id="iRitualFrom" style="width:100%;border:1px solid var(--line2);border-radius:var(--r-sm);padding:8px 10px;font-size:13px"></div>
+              <div style="flex:1;min-width:120px"><label style="display:block;font-size:11px;color:var(--muted);font-weight:600;margin-bottom:3px">Até</label><input type="date" id="iRitualTo" style="width:100%;border:1px solid var(--line2);border-radius:var(--r-sm);padding:8px 10px;font-size:13px"></div>
+            </div>
+            <div class="ritual-prev" id="iRitualPreview" style="margin-top:9px">Selecione os dias da semana para ver as ocorrências.</div>
+            <button class="btn sm primary" id="iApplyRitual" type="button" style="margin-top:8px"><i data-lucide="repeat"></i>Aplicar ritual</button>
+          </div>
+        </div>
+      </details>
+    </div>
+    <div class="modal-f">
+        <button class="btn primary wide" id="iSave"><i data-lucide="check"></i>Salvar alocação</button>
+        <button class="btn" id="iCancelar"><i data-lucide="x"></i>Cancelar</button>
+    </div>
+  </div>
+</div>
+
+<!-- modal: Ações / cadastros -->
+<div class="overlay" id="actOverlay">
+  <div class="modal big split-h">
+    <div class="modal-h">
+      <div><div class="t"><i data-lucide="settings-2"></i>Ações · Cadastros</div><div class="s">Projetos, analistas, líderes e seus vínculos</div></div>
+      <button class="x" id="actClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="split-row">
+      <div class="tabs-vertical" id="actTabs"></div>
+      <div class="act-body" id="actBody"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Relatórios ===== -->
+<div class="overlay" id="repOverlay">
+  <div class="modal big">
+    <div class="modal-h">
+      <div><div class="t"><i data-lucide="file-bar-chart-2"></i>Relatórios</div><div class="s">Análise de alocação · respeitando o escopo do seu perfil</div></div>
+      <button class="x" id="repClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="tabs" id="repTabs"></div>
+    <div class="rep-filters" id="repFilters"></div>
+    <div class="act-body" id="repBody"></div>
+  </div>
+</div>
+
+<!-- ===== Modal: Conflitos previsto × realizado (Fase 2 · read-only) ===== -->
+<div class="overlay" id="conflitosOverlay">
+  <div class="modal big">
+    <div class="modal-h">
+      <div><div class="t"><i data-lucide="git-compare-arrows"></i>Conflitos previsto × realizado</div><div class="s">Onde o realizado diverge do previsto, e previstos vencidos ainda não realizados · somente leitura</div></div>
+      <button class="x" id="conflitosClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="act-body" id="conflitosBody"></div>
+  </div>
+</div>
+
+<!-- ===== Modal: Gerar pré-alocação (Fase 3) ===== -->
+<div class="overlay" id="gerarPrevOverlay">
+  <div class="modal big">
+    <div class="modal-h">
+      <div><div class="t"><i data-lucide="calendar-plus"></i>Gerar pré-alocação</div><div class="s">Cria o previsto do time a partir das datas das etapas do projeto · pré-visualize antes de gravar</div></div>
+      <button class="x" id="gerarPrevClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="modal-b" id="gerarPrevBody"></div>
+  </div>
+</div>
+
+<!-- ===== Modal: Trocar senha ===== -->
+<div class="overlay" id="pwdOverlay" style="z-index:135">
+  <div class="modal">
+    <div class="modal-h">
+      <div><div class="t" id="pwdTitle"><i data-lucide="key-round"></i>Trocar senha</div><div class="s" id="pwdSub">Para sua segurança, recomendamos trocar sua senha.</div></div>
+      <button class="x" id="pwdClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="modal-b">
+      <div id="pwdInfo" class="hint" style="margin-bottom:12px;display:none"></div>
+      <div class="f"><label>Senha atual <span style="color:var(--fn-orange)">*</span></label>
+        <input type="password" id="pwdCurrent" autocomplete="current-password" placeholder="Sua senha atual" style="width:100%;background:#fff;border:1.5px solid #e3e5ec;border-radius:10px;padding:11px 13px;font-size:14px;font-family:inherit">
+      </div>
+      <div class="f"><label>Nova senha <span style="color:var(--fn-orange)">*</span></label>
+        <input type="password" id="pwdNew" autocomplete="new-password" placeholder="Mínimo 8 caracteres" style="width:100%;background:#fff;border:1.5px solid #e3e5ec;border-radius:10px;padding:11px 13px;font-size:14px;font-family:inherit">
+      </div>
+      <div class="f"><label>Confirme a nova senha <span style="color:var(--fn-orange)">*</span></label>
+        <input type="password" id="pwdConfirm" autocomplete="new-password" placeholder="Repita a nova senha" style="width:100%;background:#fff;border:1.5px solid #e3e5ec;border-radius:10px;padding:11px 13px;font-size:14px;font-family:inherit">
+      </div>
+      <div id="pwdError" class="auth-err" style="margin-top:6px"></div>
+      <div class="hint" style="margin-top:10px;font-size:11.5px"><b>Dica:</b> use ao menos 8 caracteres, com letras, números e algum símbolo. Evite senhas óbvias (nome, data de nascimento, sequências).</div>
+    </div>
+    <div class="modal-f" style="gap:8px">
+      <button class="btn primary wide" id="pwdSave"><i data-lucide="check"></i>Salvar nova senha</button>
+      <button class="btn" id="pwdLater"><i data-lucide="clock"></i>Agora não</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== Esteira de Projetos ===== -->
+<div class="overlay as-page" id="esteiraOverlay">
+  <div class="modal big">
+    <div class="modal-h">
+      <div><div class="t"><i data-lucide="route"></i>Esteira de Projetos</div><div class="s">Evolução por etapa · datas e situação editáveis em tempo real</div></div>
+      <button class="x" id="esteiraClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="est-toolbar">
+      <div class="est-views" id="estViews">
+        <button data-ev="dashboard" class="on"><i data-lucide="layout-dashboard"></i>Dashboard</button>
+        <button data-ev="tabela"><i data-lucide="table-2"></i>Tabela</button>
+        <button data-ev="painel"><i data-lucide="bar-chart-3"></i>Indicadores</button>
+      </div>
+      <input class="est-search" id="estSearch" placeholder="Buscar projeto, GP, líder…">
+      <div class="est-filterwrap">
+        <label>Etapa</label>
+        <select id="estFilterEtapa" class="est-sel"></select>
+      </div>
+      <div class="est-filterwrap">
+        <label>Situação</label>
+        <select id="estFilterStatus" class="est-sel"></select>
+      </div>
+      <div class="est-savehint" id="estSaveHint"><i data-lucide="check"></i>Salvo na nuvem</div>
+    </div>
+    <div id="estBody" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
+  </div>
+</div>
+
+<!-- ===== Discovery (rituais da fase de Discovery) ===== -->
+<div class="overlay as-page" id="discoveryOverlay">
+  <div class="modal big">
+    <div class="modal-h">
+      <div><div class="t"><i data-lucide="search"></i>Linha do Tempo - Discovery</div><div class="s">Evolução das atividades do Discovery · recebimento, datas, situação e atividade atual editáveis em tempo real</div></div>
+      <button class="x" id="discoveryClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="est-toolbar">
+      <div class="est-views" id="dscViews">
+        <button data-dv="dashboard" class="on"><i data-lucide="layout-dashboard"></i>Dashboard</button>
+        <button data-dv="tabela"><i data-lucide="table-2"></i>Tabela</button>
+        <button data-dv="kpi"><i data-lucide="bar-chart-3"></i>Indicadores</button>
+      </div>
+      <input class="est-search" id="dscSearch" placeholder="Buscar projeto, GP, líder…">
+      <div class="est-filterwrap">
+        <label>Atividade</label>
+        <select id="dscFilterRito" class="est-sel"></select>
+      </div>
+      <div class="est-filterwrap">
+        <label>Situação</label>
+        <select id="dscFilterSituacao" class="est-sel"></select>
+      </div>
+      <div class="est-filterwrap">
+        <label>Recebimento (de / até)</label>
+        <div style="display:flex;gap:6px">
+          <input type="date" id="dscRecebDe" title="Recebido a partir de" style="border:1px solid var(--line2);background:#fff;border-radius:9px;padding:8px 10px;font-size:12px;width:138px;font-family:inherit">
+          <input type="date" id="dscRecebAte" title="Recebido até" style="border:1px solid var(--line2);background:#fff;border-radius:9px;padding:8px 10px;font-size:12px;width:138px;font-family:inherit">
+        </div>
+      </div>
+      <div class="est-savehint" id="dscSaveHint"><i data-lucide="check"></i>Salvo na nuvem</div>
+    </div>
+    <div id="dscBody" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
+  </div>
+</div>
+
+<!-- ===== KPIs ===== -->
+<div class="overlay" id="kpiOverlay">
+  <div class="modal big">
+    <div class="modal-h">
+      <div><div class="t"><i data-lucide="line-chart"></i>KPIs · NS ALOC</div><div class="s">Painel de indicadores · respeitando o escopo do seu perfil</div></div>
+      <button class="x" id="kpiClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="rep-filters" id="kpiFilters"></div>
+    <div class="kpi-tabs" id="kpiTabs"></div>
+    <div class="act-body" id="kpiBody"></div>
+  </div>
+</div>
+
+<script src="js/app.js"></script>
+</body>
+</html>
