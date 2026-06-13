@@ -345,6 +345,15 @@
       <div><div class="t"><i data-lucide="file-bar-chart-2"></i>Relatórios</div><div class="s">Análise de alocação · respeitando o escopo do seu perfil</div></div>
       <button class="x" id="repClose"><i data-lucide="x"></i></button>
     </div>
+    <div class="filtros-periodo" data-painel-periodo="relatorios">
+      <span>Período de Análise:</span>
+      <input type="date" id="repPeriodoDataInicio">
+      <span class="ate">até</span>
+      <input type="date" id="repPeriodoDataFim">
+      <button class="btn filtro-aplicar" onclick="atualizarPainelAtivo('relatorios')">
+        <i data-lucide="filter"></i> Aplicar Filtro
+      </button>
+    </div>
     <div class="tabs" id="repTabs"></div>
     <div class="rep-filters" id="repFilters"></div>
     <div class="act-body" id="repBody"></div>
@@ -357,6 +366,15 @@
     <div class="modal-h">
       <div><div class="t"><i data-lucide="git-compare-arrows"></i>Conflitos previsto × realizado</div><div class="s">Onde o realizado diverge do previsto, e previstos vencidos ainda não realizados · somente leitura</div></div>
       <button class="x" id="conflitosClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="filtros-periodo" data-painel-periodo="conflitos">
+      <span>Período de Análise:</span>
+      <input type="date" id="conflitosPeriodoDataInicio">
+      <span class="ate">até</span>
+      <input type="date" id="conflitosPeriodoDataFim">
+      <button class="btn filtro-aplicar" onclick="carregarConflitosPorPeriodo()">
+        <i data-lucide="filter"></i> Aplicar Filtro
+      </button>
     </div>
     <div class="act-body" id="conflitosBody"></div>
   </div>
@@ -471,6 +489,15 @@
     <div class="modal-h">
       <div><div class="t"><i data-lucide="line-chart"></i>KPIs · NS ALOC</div><div class="s">Painel de indicadores · respeitando o escopo do seu perfil</div></div>
       <button class="x" id="kpiClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="filtros-periodo" data-painel-periodo="kpis">
+      <span>Período de Análise:</span>
+      <input type="date" id="kpiPeriodoDataInicio">
+      <span class="ate">até</span>
+      <input type="date" id="kpiPeriodoDataFim">
+      <button class="btn filtro-aplicar" onclick="atualizarPainelAtivo('kpis')">
+        <i data-lucide="filter"></i> Aplicar Filtro
+      </button>
     </div>
     <div class="rep-filters" id="kpiFilters"></div>
     <div class="kpi-tabs" id="kpiTabs"></div>
