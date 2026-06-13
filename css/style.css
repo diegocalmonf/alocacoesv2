@@ -263,6 +263,37 @@ td.cell.locked,td.gcell.locked{cursor:not-allowed}
 .pv-row-warn{border-color:#f3c4c4;background:#fff7f7}
 .pv-resumo{margin-top:11px}
 @media(max-width:760px){.pv-incl-grid{grid-template-columns:1fr 1fr}.pv-incl-btn{grid-column:1/-1}.pv-row{grid-template-columns:1fr 1fr}.pv-row .pv-del{grid-column:1/-1}}
+/* ===== Previsto dirigido por atividade (Fase 2) ===== */
+.pvx-incl-grid{display:grid;grid-template-columns:1.3fr .8fr 1.7fr 1.1fr auto;gap:10px;align-items:end}
+.pvx-incl-grid .f{margin-bottom:0}
+.pvx-prev{margin-top:10px;font-size:12px;color:#777}
+.pvx-head,.pvx-row{display:grid;grid-template-columns:30px 1.1fr .65fr 1.5fr 1.2fr 1.05fr .55fr 62px 80px;gap:8px;align-items:center}
+.pvx-head{font-size:10.5px;font-weight:600;color:#999;text-transform:uppercase;letter-spacing:.04em;padding:0 12px 4px}
+.pvx-row{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:12.5px;margin-bottom:6px}
+.pvx-row-warn{border-color:#f3c4c4;background:#fff7f7}
+.pvx-row .pvx-ord{font-weight:700;color:#bbb}
+.pvx-row input[type=date]{width:100%;font-size:12px;padding:5px 7px;border:1px solid var(--line2);border-radius:7px;background:#fff}
+.pvx-row .pvx-auto input{background:#fafafa;color:#888}
+.pvx-term{font-weight:600}
+.pvx-move{display:flex;gap:3px}
+.pvx-move button,.pvx-del{border:1px solid var(--line2);background:#fff;border-radius:7px;padding:4px 7px;cursor:pointer;font-size:11.5px;font-weight:600}
+.pvx-move button:hover,.pvx-del:hover{border-color:var(--orange-bd);color:var(--orange)}
+.pvx-bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-top:14px;padding:12px 14px;background:#fafafa;border:1px solid var(--line);border-radius:12px}
+.pvx-term-box{font-size:12.5px}.pvx-term-box b{font-size:14px}
+.pvx-status{font-size:11px;padding:4px 9px;border-radius:8px;font-weight:600}
+.pvx-status.pend{background:#fff4e9;border:1px solid #f3d9bb;color:#9a5a00}
+.pvx-status.ok{background:#eef7f0;border:1px solid #cfe7d6;color:#1f7a3d}
+@media(max-width:760px){.pvx-incl-grid{grid-template-columns:1fr 1fr}.pvx-head{display:none}.pvx-row{grid-template-columns:1fr 1fr;gap:6px}.pvx-row .pvx-del{grid-column:1/-1}}
+/* ===== Esteira · Previsto × Realizado (Fase 3) ===== */
+.pr-legend{padding:8px 20px;font-size:11.5px;color:#666;border-bottom:1px solid var(--line);display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.pr-table td.pr-c{font-size:11.5px;line-height:1.5;white-space:nowrap}
+.pr-c .pr-prev{color:#9a5a00}
+.pr-c .pr-real{color:#1f4ea1;font-weight:600}
+.pr-chip{display:inline-block;margin-top:3px;font-size:10px;font-weight:700;padding:1px 7px;border-radius:7px;border:1px solid}
+.pr-chip.pr-ok{background:#eef7f0;border-color:#cfe7d6;color:#1f7a3d}
+.pr-chip.pr-warn{background:#fff4e9;border-color:#f3d9bb;color:#9a5a00}
+.pr-chip.pr-bad{background:#fff3f3;border-color:#f3c4c4;color:#b32020}
+.pr-chip.pr-pend{background:#f5f6f8;border-color:var(--line);color:#888}
 .obs-mark{position:absolute;top:4px;right:5px;font-size:10px;opacity:.85;line-height:1;background:rgba(255,255,255,.65);border-radius:4px;padding:1px 3px}
 .gchip{position:relative}
 .cell.wknd{background:#f4f3f1}
