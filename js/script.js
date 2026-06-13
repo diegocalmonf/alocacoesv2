@@ -1250,8 +1250,8 @@ function periodLabel(){
 /* ===================== categoria → cor ===================== */
 // Resolve a atividade cadastrada pelo nome (se existir)
 function atividadeObj(nome){return (REG.atividades||[]).find(a=>a.nome===nome)||null;}
-function atividadesAtivas(){return (REG.atividades||[]).filter(a=>a.ativo!==false);}
-function atividadesAtivasPorTipo(tipo){return atividadesAtivas().filter(a=>a.tipo===tipo);}
+function atividadesAtivas(){return (REG.atividades||[]).filter(a=>a.ativo!==false).slice().sort(byNome);}
+function atividadesAtivasPorTipo(tipo){return atividadesAtivas().filter(a=>a.tipo===tipo).sort(byNome);}
 
 // Resolve a categoria visual (cor do chip). Aceita uma string (compat) OU o registro inteiro {cliente, atividade}.
 // Prioriza a atividade cadastrada (que tem tipo conhecido); só cai no cliente se a atividade não resolver.
@@ -1488,8 +1488,14 @@ function gpPorEmail(email){
 }
 function emailValido(e){return !e || /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e);}
 
-const analistaNomes=(incluirInativos=false)=>REG.analistas.filter(a=>incluirInativos||isAtivo(a)).map(a=>a.nome).sort((a,b)=>a.localeCompare(b,"pt"));
-const projetoNomes=(incluirInativos=false)=>REG.projetos.filter(p=>incluirInativos||isAtivo(p)).map(p=>p.nome);
+// Ordenação padrão do sistema (pt-BR, ignorando maiúsculas/minúsculas e acentos).
+// Usada em selects, cadastros e listas operacionais para manter tudo previsível.
+function cmpAlpha(a,b){return String(a||"").localeCompare(String(b||""),"pt-BR",{sensitivity:"base",numeric:true});}
+function byNome(a,b){return cmpAlpha(a&&a.nome,b&&b.nome);}
+function sortAlpha(arr){return (arr||[]).slice().sort(cmpAlpha);}
+
+const analistaNomes=(incluirInativos=false)=>REG.analistas.filter(a=>incluirInativos||isAtivo(a)).map(a=>a.nome).sort(cmpAlpha);
+const projetoNomes=(incluirInativos=false)=>REG.projetos.filter(p=>incluirInativos||isAtivo(p)).map(p=>p.nome).sort(cmpAlpha);
 const liderDe=n=>{const a=REG.analistas.find(x=>x.nome===n);return a?a.lider:"";};
 const squadDe=n=>{const a=REG.analistas.find(x=>x.nome===n);return (a&&a.squad)||"";};
 // Renderiza um chip de squad (vazio se não houver squad). `sm` deixa o chip menor.
@@ -1498,10 +1504,10 @@ function squadChipHTML(squad, sm){
   const m=squadMeta(squad);
   return `<span class="squad-chip${sm?' sm':''}" style="--sq-color:${m.color};--sq-bg:${m.bg};--sq-bd:${m.bd}"><span class="dot"></span>${enc(squad)}</span>`;
 }
-const projetosDoAnalista=n=>REG.projetos.filter(p=>(p.analistas||[]).includes(n)).map(p=>p.nome);
+const projetosDoAnalista=n=>REG.projetos.filter(p=>(p.analistas||[]).includes(n)).map(p=>p.nome).sort(cmpAlpha);
 // Líderes/GPs ativos (estruturas simples: array de nomes, com listas paralelas de inativos)
-const lideresAtivos=()=>(REG.lideres||[]).filter(l=>!(REG.lideresInativos||{})[l]);
-const gpsAtivos=()=>(REG.gps||[]).filter(g=>!(REG.gpsInativos||{})[g]);
+const lideresAtivos=()=>sortAlpha((REG.lideres||[]).filter(l=>!(REG.lideresInativos||{})[l]));
+const gpsAtivos=()=>sortAlpha((REG.gps||[]).filter(g=>!(REG.gpsInativos||{})[g]));
 function statusBadge(s){const m={"Em andamento":"b-ema","Estabilização":"b-est","Concluído":"b-con","Não iniciado":"b-nao","Congelado":"b-cgl","Churn":"b-chr"};return `<span class="badge ${m[s]||'b-nao'}">${s||'—'}</span>`;}
 // Selo de categoria (segmentação por nível) com cores metálicas. Vazio = sem categoria.
 function categoriaBadge(c){if(!c)return "";const cls={Platina:"b-cat-platina",Ouro:"b-cat-ouro",Prata:"b-cat-prata",Bronze:"b-cat-bronze"}[c]||"b-cat-prata";return `<span class="badge b-cat ${cls}" title="Categoria: ${c}"><i class="cat-dot"></i>${c}</span>`;}
@@ -2777,8 +2783,8 @@ function buildClienteSelectInc(sel){
   });
   // Para o analista selecionado, mostra "do analista" vs "outros"
   const an=el("iAnalista").value;
-  const vinc=an?projetosDoAnalista(an).filter(p=>candidatos.includes(p)):[];
-  const outros=candidatos.filter(p=>!vinc.includes(p));
+  const vinc=an?projetosDoAnalista(an).filter(p=>candidatos.includes(p)).sort(cmpAlpha):[];
+  const outros=candidatos.filter(p=>!vinc.includes(p)).sort(cmpAlpha);
   let html=`<option value="">— Selecione o projeto —</option>`;
   if(vinc.length)  html+=`<optgroup label="Projetos do analista">`+vinc.map(i=>`<option ${i===sel?"selected":""}>${enc(i)}</option>`).join("")+`</optgroup>`;
   if(outros.length)html+=`<optgroup label="Outros projetos">`+outros.map(i=>`<option ${i===sel?"selected":""}>${enc(i)}</option>`).join("")+`</optgroup>`;
@@ -3154,7 +3160,7 @@ function renderList(){
   const ina=(isAt)=>isAt?"":' inativo';
   const selo=(isAt)=>isAt?"":' <span class="badge b-inativo">Inativo</span>';
   if(actTab==="projetos"){
-    items=REG.projetos.filter(p=>p.nome.toLowerCase().includes(actSearch));
+    items=REG.projetos.filter(p=>p.nome.toLowerCase().includes(actSearch)).slice().sort(byNome);
     total=items.length;
     if(!actShowInativos){ocultos=items.filter(p=>!isAtivo(p)).length;items=items.filter(p=>isAtivo(p));}
     rows=items.map(p=>{const col=colorFor(p.nome);const at=isAtivo(p);const t=TIPOS_ATIVIDADE.find(x=>x.id===(p.tipo||"implantacao"))||{nome:"—",icone:"•"};return `<div class="row${ina(at)}" data-nome="${enc(p.nome)}">
@@ -3164,7 +3170,7 @@ function renderList(){
       <span>Líder: <b>${p.lider||'—'}</b></span><span>· GP: <b>${p.gp||'—'}</b></span><span>· ${(p.analistas||[]).length} analista(s)</span></div></div>
       <span class="chev">›</span></div>`;}).join("");
   }else if(actTab==="analistas"){
-    items=REG.analistas.filter(a=>a.nome.toLowerCase().includes(actSearch)).sort((a,b)=>a.nome.localeCompare(b.nome,"pt"));
+    items=REG.analistas.filter(a=>a.nome.toLowerCase().includes(actSearch)).slice().sort(byNome);
     total=items.length;
     if(!actShowInativos){ocultos=items.filter(a=>!isAtivo(a)).length;items=items.filter(a=>isAtivo(a));}
     rows=items.map(a=>{const np=projetosDoAnalista(a.nome).length;const at=isAtivo(a);return `<div class="row${ina(at)}" data-nome="${enc(a.nome)}">
@@ -3173,7 +3179,7 @@ function renderList(){
       <div class="meta"><span>Squad: <b>${a.squad?enc(a.squad):'—'}</b></span><span>· Líder: <b>${a.lider||'—'}</b></span><span>· ${np} projeto(s)</span>${a.email?`<span>· ✉ ${enc(a.email)}</span>`:""}</div></div>
       <span class="chev">›</span></div>`;}).join("");
   }else if(actTab==="lideres"){
-    items=REG.lideres.filter(l=>l.toLowerCase().includes(actSearch));
+    items=sortAlpha(REG.lideres.filter(l=>l.toLowerCase().includes(actSearch)));
     total=items.length;
     const inativosL=REG.lideresInativos||{};
     if(!actShowInativos){ocultos=items.filter(l=>!!inativosL[l]).length;items=items.filter(l=>!inativosL[l]);}
@@ -3184,11 +3190,11 @@ function renderList(){
       <div class="meta"><span>${na} analista(s)</span><span>· ${np} projeto(s)</span>${em?`<span>· ✉ ${enc(em)}</span>`:""}</div></div>
       <span class="chev">›</span></div>`;}).join("");
   }else if(actTab==="atividades"){
-    items=(REG.atividades||[]).filter(a=>a.nome.toLowerCase().includes(actSearch));
+    items=(REG.atividades||[]).filter(a=>a.nome.toLowerCase().includes(actSearch)).slice().sort(byNome);
     total=items.length;
     if(!actShowInativos){ocultos=items.filter(a=>a.ativo===false).length;items=items.filter(a=>a.ativo!==false);}
-    // ordena por tipo, depois nome
-    items=items.slice().sort((a,b)=>(a.tipo||"").localeCompare(b.tipo||"")||a.nome.localeCompare(b.nome,"pt"));
+    // ordena alfabeticamente pelo nome da atividade
+    items=items.slice().sort(byNome);
     rows=items.map(a=>{const at=a.ativo!==false;const t=TIPOS_ATIVIDADE.find(x=>x.id===a.tipo)||{icone:"•",nome:a.tipo||"—"};
       return `<div class="row${ina(at)}" data-nome="${enc(a.nome)}">
       <div class="av" style="background:${colorFor(a.nome)}">${t.icone}</div>
@@ -3204,7 +3210,7 @@ function renderList(){
       <div class="meta"><span>${DOW[d.getDay()]}, ${fmtDM(d)}/${d.getFullYear()}</span></div></div>
       <span class="chev">›</span></div>`;}).join("");
   }else{
-    items=(REG.gps||[]).filter(g=>g.toLowerCase().includes(actSearch));
+    items=sortAlpha((REG.gps||[]).filter(g=>g.toLowerCase().includes(actSearch)));
     total=items.length;
     const inativosG=REG.gpsInativos||{};
     if(!actShowInativos){ocultos=items.filter(g=>!!inativosG[g]).length;items=items.filter(g=>!inativosG[g]);}
@@ -3764,7 +3770,7 @@ function propagaFeriadoNosSlots(iso, nomeFeriado, preservar){
   const atividade=atvObj?atvObj.nome:"Feriado";
   const cliente=nomeFeriado||"Feriado"; // cliente = nome do feriado (Corpus Christi, Independência etc)
   const slots=SLOTS.filter(s=>!s.lunch).map(s=>s.id);
-  const analistas=REG.analistas.filter(a=>isAtivo(a)).map(a=>a.nome);
+  const analistas=REG.analistas.filter(a=>isAtivo(a)).map(a=>a.nome).sort(cmpAlpha);
   const agora=new Date().toISOString();
   const user=(_currentUser&&_currentUser.email)||"sistema";
   let sobrescritos=0, criados=0;
@@ -4737,7 +4743,7 @@ function renderGerarPrev(){
   const vis=_projetosVisiveis();
   if(!vis.length){ body.innerHTML=`<div class="confl-empty">Nenhum projeto no seu escopo.</div>`; return; }
   const p=(REG.projetos||[]).find(x=>x.nome===_gpState.projeto)||vis[0];
-  const ativos=(REG.atividades||[]).filter(a=>a.ativo!==false).map(a=>a.nome);
+  const ativos=atividadesAtivas().map(a=>a.nome);
   if(!ativos.includes(_gpState.atividade)) _gpState.atividade = ativos.includes("Implantação")?"Implantação":(ativos[0]||"Implantação");
   const optProj=vis.map(x=>`<option value="${enc(x.nome)}" ${x.nome===p.nome?"selected":""}>${enc(x.nome)}</option>`).join("");
   const time=(p.analistas||[]).filter(Boolean);
