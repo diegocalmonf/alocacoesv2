@@ -32,6 +32,8 @@ function projetoCompativelComAtividade(tipoProj, tipoAtv){
 }
 const ATIVIDADES=["Daily","Implantação","Interna"]; // mantido para compatibilidade
 const SEGMENTACOES=["Essential","Enterprise","Migração"];
+// Categoria de segmentação por nível (metal tiers). Campo opcional em projetos — compat: ausência = sem categoria.
+const CATEGORIAS=["Platina","Ouro","Prata","Bronze"];
 const STATUSES=["Não iniciado","Em andamento","Estabilização","Congelado","Concluído","Churn"];
 /* ===== Squads dos analistas =====
    Valor armazenado = label exibido (campo opcional a.squad). Squads novas só precisam
@@ -327,10 +329,13 @@ function canEditAlloc(nome,iso){
     const corte=a.desligamento||a.inativadoEm;
     if(!corte || (iso && iso>=corte)) return false; // inativo sem data, ou data >= corte
   }
-  if(isAdmin()||isGestor())return true;
+  // Escopo "Meus" de Líder/GP: mesmo com permissão de edição, só editam analistas
+  // dos próprios projetos (filtro de ESCOPO — não de nível de permissão).
   if(isLider())return analistasDoLiderLogado().includes(nome);
   if(isGp())return analistasDoGpLogado().includes(nome);
-  return false; // analista: somente leitura
+  // Demais perfis (admin, gestor, analista, leitura): a matriz de permissão por ação
+  // (canEditAction("grade")) já decidiu acima. Quem chegou aqui tem grade:edit efetivo.
+  return true;
 }
 function visibleAnalysts(refIso){
   // refIso opcional: se informado, inclui analistas que estavam ATIVOS naquela data
@@ -1105,7 +1110,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.61.0";
+const APP_VERSION = "1.63.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -1164,6 +1169,8 @@ const projetosDoAnalista=n=>REG.projetos.filter(p=>(p.analistas||[]).includes(n)
 const lideresAtivos=()=>(REG.lideres||[]).filter(l=>!(REG.lideresInativos||{})[l]);
 const gpsAtivos=()=>(REG.gps||[]).filter(g=>!(REG.gpsInativos||{})[g]);
 function statusBadge(s){const m={"Em andamento":"b-ema","Estabilização":"b-est","Concluído":"b-con","Não iniciado":"b-nao","Congelado":"b-cgl","Churn":"b-chr"};return `<span class="badge ${m[s]||'b-nao'}">${s||'—'}</span>`;}
+// Selo de categoria (segmentação por nível) com cores metálicas. Vazio = sem categoria.
+function categoriaBadge(c){if(!c)return "";const cls={Platina:"b-cat-platina",Ouro:"b-cat-ouro",Prata:"b-cat-prata",Bronze:"b-cat-bronze"}[c]||"b-cat-prata";return `<span class="badge b-cat ${cls}" title="Categoria: ${c}"><i class="cat-dot"></i>${c}</span>`;}
 function feriadosMap(){const m={};(REG.feriados||[]).forEach(f=>{if(f.data)m[f.data]=f.nome;});return m;}
 
 /* renomear: migra todas as referências */
@@ -2758,7 +2765,7 @@ function renderList(){
     rows=items.map(p=>{const col=colorFor(p.nome);const at=isAtivo(p);const t=TIPOS_ATIVIDADE.find(x=>x.id===(p.tipo||"implantacao"))||{nome:"—",icone:"•"};return `<div class="row${ina(at)}" data-nome="${enc(p.nome)}">
       <div class="av" style="background:${col}">${(p.nome[0]||'?').toUpperCase()}</div>
       <div class="main"><div class="nm">${p.nome}${selo(at)}</div>
-      <div class="meta"><span class="badge" style="background:#f5f5f5;color:var(--muted);border:1px solid var(--line);font-weight:700">${t.icone} ${enc(t.nome)}</span><span class="badge b-seg">${p.segmentacao||'—'}</span>${statusBadge(p.status)}
+      <div class="meta"><span class="badge" style="background:#f5f5f5;color:var(--muted);border:1px solid var(--line);font-weight:700">${t.icone} ${enc(t.nome)}</span><span class="badge b-seg">${p.segmentacao||'—'}</span>${p.categoria?categoriaBadge(p.categoria):''}${statusBadge(p.status)}
       <span>Líder: <b>${p.lider||'—'}</b></span><span>· GP: <b>${p.gp||'—'}</b></span><span>· ${(p.analistas||[]).length} analista(s)</span></div></div>
       <span class="chev">›</span></div>`;}).join("");
   }else if(actTab==="analistas"){
@@ -2791,7 +2798,7 @@ function renderList(){
       return `<div class="row${ina(at)}" data-nome="${enc(a.nome)}">
       <div class="av" style="background:${colorFor(a.nome)}">${t.icone}</div>
       <div class="main"><div class="nm">${enc(a.nome)}${selo(at)}</div>
-      <div class="meta"><span><b>${enc(t.nome)}</b></span>${a.exigeObs?'<span>· exige observação</span>':''}${a.enviaEmail===true?'<span>· com e-mail</span>':''}</div></div>
+      <div class="meta"><span><b>${enc(t.nome)}</b></span>${(a.slotsNecessarios!=null&&a.slotsNecessarios!=='')?`<span>· ${a.slotsNecessarios} slot(s)</span>`:''}${(a.etapa&&ETAPA_BY_ID[a.etapa])?`<span>· ${enc(ETAPA_BY_ID[a.etapa].label)}</span>`:''}${a.exigeObs?'<span>· exige observação</span>':''}${a.enviaEmail===true?'<span>· com e-mail</span>':''}</div></div>
       <span class="chev">›</span></div>`;}).join("");
   }else if(actTab==="feriados"){
     const sorted=(REG.feriados||[]).filter(f=>f.nome.toLowerCase().includes(actSearch)).slice().sort((a,b)=>(a.data||"").localeCompare(b.data||""));
@@ -3035,7 +3042,7 @@ function _pvRemoverLinha(idx){
 function renderForm(){
   const b=el("actBody"), isNew=!!actEditing.__new;
   if(actTab==="projetos"){
-    const p=isNew?{nome:"",tipo:"implantacao",segmentacao:"Essential",status:"Em andamento",gp:"",lider:"",analistas:[],goLivePrevisto:"",goLiveAjustado:"",goLiveRealizado:"",goLiveModalidade:"",goLiveSituacao:"Planejado",dtDiscovery:""}:actEditing;
+    const p=isNew?{nome:"",tipo:"implantacao",segmentacao:"Essential",categoria:"",status:"Em andamento",gp:"",lider:"",analistas:[],goLivePrevisto:"",goLiveAjustado:"",goLiveRealizado:"",goLiveModalidade:"",goLiveSituacao:"Planejado",dtDiscovery:""}:actEditing;
     if(!p.tipo)p.tipo="implantacao"; // compat com projetos antigos
     b.innerHTML=`<div class="crumb"><button id="back">‹ Projetos</button>/ ${isNew?'Novo':enc(p.nome)}</div>
       <div class="proj-subtabs">
@@ -3047,21 +3054,22 @@ function renderForm(){
         <div class="f"><label>Nome do projeto</label><input type="text" id="f_nome" value="${enc(p.nome)}" placeholder="Ex.: Transbom"></div>
         <div class="f"><label>Tipo do projeto</label><select id="f_tipo">${TIPOS_ATIVIDADE.map(t=>`<option value="${t.id}" ${t.id===p.tipo?'selected':''}>${t.icone} ${t.nome}</option>`).join("")}</select></div>
         <div class="f"><label>Segmentação</label><select id="f_seg">${SEGMENTACOES.map(s=>`<option ${s===p.segmentacao?'selected':''}>${s}</option>`).join("")}</select></div>
+        <div class="f full"><label>Categoria <span class="lbl-soft">· segmentação por nível</span></label>
+          <div class="tier-pick" id="f_cat" role="radiogroup" aria-label="Categoria de segmentação">
+            ${CATEGORIAS.map(c=>`<button type="button" class="tier-chip t-${c.toLowerCase()} ${c===(p.categoria||'')?'on':''}" data-cat="${c}" role="radio" aria-checked="${c===(p.categoria||'')?'true':'false'}">${c}</button>`).join("")}
+          </div>
+        </div>
         <div class="f"><label>Status</label><select id="f_status">${STATUSES.map(s=>`<option ${s===p.status?'selected':''}>${s}</option>`).join("")}</select></div>
         <div class="f"><label>GP (Gerente de Projeto)</label><select id="f_gp"><option value="">—</option>${(p.gp&&!gpsAtivos().includes(p.gp))?`<option selected>${enc(p.gp)} (inativo)</option>`:""}${gpsAtivos().map(g=>`<option ${g===p.gp?'selected':''}>${enc(g)}</option>`).join("")}</select></div>
         <div class="f"><label>Líder de implantação</label><select id="f_lider"><option value="">—</option>${(p.lider&&!lideresAtivos().includes(p.lider))?`<option selected>${enc(p.lider)} (inativo)</option>`:""}${lideresAtivos().map(l=>`<option ${l===p.lider?'selected':''}>${enc(l)}</option>`).join("")}</select></div>
         <div class="f"><label>Recebimento de Projetos</label><input type="date" id="f_dtReceb" value="${enc(p.dtRecebimento||'')}"></div>
-        <div class="f full" style="margin-top:6px;padding-top:14px;border-top:1px dashed var(--line)">
-          <label style="font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--fn-faint);font-weight:700">Bloco Go-Live</label>
-        </div>
+        <div class="f full fsec"><span>Bloco Go-Live</span></div>
         <div class="f"><label>Go-Live previsto (original)</label><input type="date" id="f_glPrev" value="${enc(p.goLivePrevisto||'')}"></div>
         <div class="f"><label>Go-Live ajustado (replanejado)</label><input type="date" id="f_glAju" value="${enc(p.goLiveAjustado||'')}"></div>
         <div class="f"><label>Go-Live realizado</label><input type="date" id="f_glReal" value="${enc(p.goLiveRealizado||'')}"></div>
         <div class="f"><label>Modalidade</label><select id="f_glMod"><option value="">—</option>${GOLIVE_MODALIDADES.map(m=>`<option ${m===p.goLiveModalidade?'selected':''}>${m}</option>`).join("")}</select></div>
         <div class="f"><label>Situação do Go-Live</label><select id="f_glSit">${GOLIVE_SITUACOES.map(s=>`<option ${s===(p.goLiveSituacao||"Planejado")?'selected':''}>${s}</option>`).join("")}</select></div>
-        <div class="f full" style="margin-top:6px;padding-top:14px;border-top:1px dashed var(--line)">
-          <label style="font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--fn-faint);font-weight:700">Esteira · Datas de início das etapas</label>
-        </div>
+        <div class="f full fsec"><span>Esteira · Datas de início das etapas</span></div>
         <div class="f"><label>Etapa atual</label><select id="f_etapa"><option value="">Automática (pelas datas)</option>${ETAPAS.map(e=>`<option value="${e.id}" ${e.id===(p.etapaAtual||'')?'selected':''}>${e.label}</option>`).join("")}</select></div>
         <div class="f"><label>1 · Discovery</label><input type="date" id="f_dtDisc" value="${enc(p.dtDiscovery||'')}"></div>
         <div class="f"><label>2 · Cadastros básicos</label><input type="date" id="f_dtCad" value="${enc(p.dtCadBasicos||'')}"></div>
@@ -3081,7 +3089,9 @@ function renderForm(){
     bindFormFooter(()=>{
       const nome=el("f_nome").value.trim();if(!nome)return;
       const analistas=[...b.querySelectorAll('#f_analistas input:checked')].map(i=>dec(i.value));
-      const obj={nome,tipo:el("f_tipo").value,segmentacao:el("f_seg").value,status:el("f_status").value,gp:el("f_gp").value,lider:el("f_lider").value,analistas,dtRecebimento:el("f_dtReceb").value,goLivePrevisto:el("f_glPrev").value,goLiveAjustado:el("f_glAju").value,goLiveRealizado:el("f_glReal").value,goLiveModalidade:el("f_glMod").value,goLiveSituacao:el("f_glSit").value,etapaAtual:el("f_etapa").value,dtDiscovery:el("f_dtDisc").value,dtCadBasicos:el("f_dtCad").value,dtLogistica:el("f_dtLog").value,dtBackoffice:el("f_dtBack").value,dtHypercare:el("f_dtHyper").value,dtMonitoramento:el("f_dtMon").value,dtFrota:el("f_dtFrota").value,dtSustentacao:el("f_dtSust").value};
+      const _catBtn=b.querySelector('#f_cat .tier-chip.on');
+      const categoria=_catBtn?_catBtn.dataset.cat:"";
+      const obj={nome,tipo:el("f_tipo").value,segmentacao:el("f_seg").value,categoria:categoria||"",status:el("f_status").value,gp:el("f_gp").value,lider:el("f_lider").value,analistas,dtRecebimento:el("f_dtReceb").value,goLivePrevisto:el("f_glPrev").value,goLiveAjustado:el("f_glAju").value,goLiveRealizado:el("f_glReal").value,goLiveModalidade:el("f_glMod").value,goLiveSituacao:el("f_glSit").value,etapaAtual:el("f_etapa").value,dtDiscovery:el("f_dtDisc").value,dtCadBasicos:el("f_dtCad").value,dtLogistica:el("f_dtLog").value,dtBackoffice:el("f_dtBack").value,dtHypercare:el("f_dtHyper").value,dtMonitoramento:el("f_dtMon").value,dtFrota:el("f_dtFrota").value,dtSustentacao:el("f_dtSust").value};
       if(isNew){REG.projetos.push(obj);audit("project.create",nome,null,obj);}
       else{
         const antes=Object.assign({},actEditing);
@@ -3093,6 +3103,11 @@ function renderForm(){
       finishForm();
     },isNew?null:()=>{const removido=Object.assign({},actEditing); REG.projetos=REG.projetos.filter(x=>x!==actEditing); audit("project.delete",removido.nome,removido,null); finishForm();});
     b.querySelectorAll('#f_analistas input').forEach(i=>i.addEventListener('change',e=>e.target.closest('.chk').classList.toggle('sel',e.target.checked)));
+    b.querySelectorAll('#f_cat .tier-chip').forEach(ch=>ch.addEventListener('click',()=>{
+      const was=ch.classList.contains('on');
+      b.querySelectorAll('#f_cat .tier-chip').forEach(x=>{x.classList.remove('on');x.setAttribute('aria-checked','false');});
+      if(!was){ch.classList.add('on');ch.setAttribute('aria-checked','true');} // clicar de novo limpa a categoria (campo opcional)
+    }));
   }
   else if(actTab==="analistas"){
     const a=isNew?{nome:"",lider:"",email:"",squad:"",ativo:true,desligamento:""}:actEditing;
@@ -3184,7 +3199,7 @@ function renderForm(){
     },isNew?null:()=>{REG.projetos.forEach(p=>{if(p.gp===nome0)p.gp="";});REG.gps=REG.gps.filter(x=>x!==nome0);if(REG.gpsInativos)delete REG.gpsInativos[nome0];if(REG.gpsEmails)delete REG.gpsEmails[nome0];finishForm();});
   }
   else if(actTab==="atividades"){
-    const a=isNew?{nome:"",tipo:"implantacao",ativo:true,exigeObs:false}:actEditing;
+    const a=isNew?{nome:"",tipo:"implantacao",ativo:true,exigeObs:false,slotsNecessarios:null,etapa:""}:actEditing;
     const userTag=(_currentUser&&_currentUser.email)||"local";
     const ativo=a.ativo!==false;
     b.innerHTML=`<div class="crumb"><button id="back">‹ Atividades</button>/ ${isNew?'Nova':enc(a.nome)}</div>
@@ -3192,6 +3207,8 @@ function renderForm(){
         <div class="f full"><label>Nome da atividade</label><input type="text" id="f_nome" value="${enc(a.nome)}" placeholder="Ex.: Treinamento logístico"></div>
         <div class="f"><label>Tipo</label><select id="f_tipo">${TIPOS_ATIVIDADE.map(t=>`<option value="${t.id}" ${t.id===a.tipo?'selected':''}>${t.icone} ${t.nome}</option>`).join("")}</select></div>
         <div class="f"><label>Situação</label><select id="f_ativo"><option value="ativo" ${ativo?'selected':''}>Ativa</option><option value="inativo" ${!ativo?'selected':''}>Inativa</option></select></div>
+        <div class="f"><label>Slots necessários <span class="lbl-soft">· por ocorrência</span></label><input type="number" id="f_slots" min="0" max="60" step="1" inputmode="numeric" value="${(a.slotsNecessarios!=null&&a.slotsNecessarios!=='')?enc(String(a.slotsNecessarios)):''}" placeholder="Ex.: 2"></div>
+        <div class="f"><label>Etapa do projeto <span class="lbl-soft">· opcional</span></label><select id="f_atvEtapa"><option value="">— (nenhuma)</option>${ETAPAS.map(e=>`<option value="${e.id}" ${e.id===(a.etapa||'')?'selected':''}>${e.label}</option>`).join("")}</select></div>
         <div class="f full"><label><input type="checkbox" id="f_obs" ${a.exigeObs?'checked':''} style="margin-right:6px;vertical-align:middle"> Exige observação ao lançar no slot</label></div>
         <div class="f full"><label><input type="checkbox" id="f_atvEmail" ${a.enviaEmail===true?'checked':''} style="margin-right:6px;vertical-align:middle"> Enviar e-mail de notificação ao alocar esta atividade</label></div>
         <div class="f full"><label>Etapa de capacitação (de-para · opcional)</label><select id="f_capstage">${(typeof capStageSelectOptions==='function')?capStageSelectOptions(a.capTrack,a.capStage):'<option value="">— (nenhuma)</option>'}</select></div>
@@ -3203,19 +3220,22 @@ function renderForm(){
       const ativoNovo=el("f_ativo").value==="ativo";
       const exigeObs=el("f_obs").checked;
       const enviaEmail=el("f_atvEmail")?el("f_atvEmail").checked:false;
+      const _slotsRaw=el("f_slots")?el("f_slots").value.trim():"";
+      const slotsNecessarios=_slotsRaw===""?null:Math.max(0,parseInt(_slotsRaw,10)||0);
+      const etapa=el("f_atvEtapa")?el("f_atvEtapa").value:"";
       const _capVal=(el("f_capstage")?el("f_capstage").value:"")||""; const _capP=_capVal?_capVal.split("\u241F"):["",""]; const capTrack=_capP[0]||""; const capStage=_capP[1]||"";
       const agora=new Date().toISOString();
       if(isNew){
         if((REG.atividades||[]).some(x=>x.nome.toLowerCase()===nome.toLowerCase())){alert("Já existe uma atividade com este nome.");return;}
         REG.atividades=REG.atividades||[];
-        REG.atividades.push({nome,tipo,ativo:ativoNovo,exigeObs,enviaEmail,capTrack,capStage,createdAt:agora,createdBy:userTag,updatedAt:agora,updatedBy:userTag});
+        REG.atividades.push({nome,tipo,ativo:ativoNovo,exigeObs,enviaEmail,slotsNecessarios,etapa,capTrack,capStage,createdAt:agora,createdBy:userTag,updatedAt:agora,updatedBy:userTag});
       }else{
         // se renomeou, propaga nas alocações que apontavam pelo nome antigo
         if(actEditing.nome!==nome){
           Object.values(DATA).forEach(v=>{if(v.atividade===actEditing.nome)v.atividade=nome;});
           actEditing.nome=nome;
         }
-        actEditing.tipo=tipo;actEditing.ativo=ativoNovo;actEditing.exigeObs=exigeObs;actEditing.enviaEmail=enviaEmail;actEditing.capTrack=capTrack;actEditing.capStage=capStage;
+        actEditing.tipo=tipo;actEditing.ativo=ativoNovo;actEditing.exigeObs=exigeObs;actEditing.enviaEmail=enviaEmail;actEditing.slotsNecessarios=slotsNecessarios;actEditing.etapa=etapa;actEditing.capTrack=capTrack;actEditing.capStage=capStage;
         actEditing.updatedAt=agora;actEditing.updatedBy=userTag;
       }
       finishForm();
@@ -4310,8 +4330,25 @@ function repDays(){
   return out;
 }
 // Analistas dentro do escopo escolhido nos filtros + papel
-// Escopos suportados: "todos" | "lider:X" | "analista:X" | "gp:X" | "tipoproj:T"
-function _aplicaEscopo(ns, escopo){
+// Escopos suportados: "todos" | "lider:X" | "analista:X" | "gp:X" | "tipoatv:T" (tipo de ATIVIDADE)
+// ===== Escopo por TIPO DE ATIVIDADE =====
+// Regra do sistema: o que dita relatórios/KPIs é o TIPO DA ATIVIDADE do slot, não o
+// tipo do projeto (este é só um identificador). O mapa abaixo usa a MESMA classificação
+// das colunas dos relatórios (categoria()), garantindo coerência entre filtro e contagem.
+const _CAT2TIPO={"c-proj":"implantacao","c-dsc":"discovery","c-svc":"service","c-rot":"interna","c-int":"interna","c-aus":"ausencia"};
+function tipoAtividadeDoSlot(r){ return _CAT2TIPO[categoria(r)] || null; }
+// Set de ISO do período de relatório (para restringir o escopo por atividade ao período).
+function _repDiasIso(){ try{ return new Set(repDays().map(toISO)); }catch(e){ return null; } }
+// Analistas com ao menos 1 slot da atividade-tipo informada (no período, se diasIso for dado).
+function _analistasComAtvTipo(tipo, diasIso){
+  const set=new Set();
+  for(const k in DATA){ const r=DATA[k]; if(!r||r.feriado) continue;
+    const p=k.split("__"); if(diasIso && !diasIso.has(p[1])) continue;
+    if(tipoAtividadeDoSlot(r)===tipo) set.add(p[0]);
+  }
+  return set;
+}
+function _aplicaEscopo(ns, escopo, diasIso){
   if(!escopo||escopo==="todos")return ns;
   if(escopo.startsWith("lider:")){const l=escopo.slice(6); return ns.filter(n=>liderDe(n)===l);}
   if(escopo.startsWith("squad:")){const s=escopo.slice(6); return ns.filter(n=>squadDe(n)===s);}
@@ -4323,16 +4360,15 @@ function _aplicaEscopo(ns, escopo){
     REG.projetos.filter(p=>p.gp===g).forEach(p=>(p.analistas||[]).forEach(a=>set.add(a)));
     return ns.filter(n=>set.has(n));
   }
-  if(escopo.startsWith("tipoproj:")){
-    const tipo=escopo.slice(9);
-    // analistas vinculados a algum projeto desse tipo
-    const set=new Set();
-    REG.projetos.filter(p=>(p.tipo||"implantacao")===tipo).forEach(p=>(p.analistas||[]).forEach(a=>set.add(a)));
+  if(escopo.startsWith("tipoatv:")){
+    // Filtro por TIPO DE ATIVIDADE: analistas que têm slot dessa atividade no período.
+    const tipo=escopo.slice(8);
+    const set=_analistasComAtvTipo(tipo, diasIso);
     return ns.filter(n=>set.has(n));
   }
   return ns;
 }
-function repAnalysts(){return _aplicaEscopo(visibleAnalysts(repTo||undefined), repScope);}
+function repAnalysts(){return _aplicaEscopo(visibleAnalysts(repTo||undefined), repScope, _repDiasIso());}
 // Conta slots de um analista no período por categoria
 function contarSlots(nome,dias,fer){
   const work=SLOTS.filter(s=>!s.lunch);
@@ -4341,6 +4377,8 @@ function contarSlots(nome,dias,fer){
   let livre=0,proj=0,dsc=0,rot=0,intn=0,svc=0,aus=0,vazio=0;
   let feriadoAuto=0; // slots vindos de feriado automático (excluídos do total trabalhado)
   const projs={};
+  const projsTipo={}; // {cliente: {implantacao,discovery,service}} — esforço por projeto separado por tipo de atividade
+  const _bumpT=(cli,t)=>{ if(!cli||cli==="Livre")return; (projsTipo[cli]=projsTipo[cli]||{})[t]=(projsTipo[cli][t]||0)+1; };
   dias.forEach(d=>{const iso=toISO(d);const isFer=!!fer[iso];
     work.forEach(s=>{const r=DATA[key(nome,iso,s.id)];
       // Sem nada lançado (ou só placeholder Livre): conta como livre ou vazio dependendo do feriado
@@ -4354,11 +4392,11 @@ function contarSlots(nome,dias,fer){
       if(r.feriado){feriadoAuto++; aus++; return;}
       const c=categoria(r);
       if(c==="c-livre")livre++;
-      else if(c==="c-proj"){proj++; projs[r.cliente]=(projs[r.cliente]||0)+1;}
-      else if(c==="c-dsc"){dsc++; if(r.cliente&&r.cliente!=="Livre")projs[r.cliente]=(projs[r.cliente]||0)+1;}
+      else if(c==="c-proj"){proj++; projs[r.cliente]=(projs[r.cliente]||0)+1; _bumpT(r.cliente,"implantacao");}
+      else if(c==="c-dsc"){dsc++; if(r.cliente&&r.cliente!=="Livre"){projs[r.cliente]=(projs[r.cliente]||0)+1; _bumpT(r.cliente,"discovery");}}
       else if(c==="c-rot")rot++;
       else if(c==="c-int")intn++;
-      else if(c==="c-svc"){svc++; if(r.cliente&&r.cliente!=="Livre")projs[r.cliente]=(projs[r.cliente]||0)+1;}
+      else if(c==="c-svc"){svc++; if(r.cliente&&r.cliente!=="Livre"){projs[r.cliente]=(projs[r.cliente]||0)+1; _bumpT(r.cliente,"service");}}
       else if(c==="c-aus")aus++;
     });
   });
@@ -4367,7 +4405,7 @@ function contarSlots(nome,dias,fer){
   const ocupado=proj+dsc+rot+intn+svc;
   const ocupBase=total-aus; // base útil exclui feriados E ausências
   const ocup=ocupBase>0?Math.round(ocupado/ocupBase*100):0;
-  return {total,livre,proj,dsc,rot,intn,svc,aus,feriadoAuto,vazio,ocupado,ocup,projs};
+  return {total,livre,proj,dsc,rot,intn,svc,aus,feriadoAuto,vazio,ocupado,ocup,projs,projsTipo};
 }
 
 /* tabs do relatório */
@@ -4384,7 +4422,7 @@ function renderReports(){
     lideresAtivos().forEach(l=>escopos.push(["lider:"+l,"Equipe: "+l]));
     gpsAtivos().forEach(g=>escopos.push(["gp:"+g,"GP: "+g]));
     SQUADS.forEach(s=>escopos.push(["squad:"+s,"Squad: "+s]));
-    TIPOS_ATIVIDADE.forEach(t=>escopos.push(["tipoproj:"+t.id, t.icone+" Tipo: "+t.nome]));
+    TIPOS_ATIVIDADE.forEach(t=>escopos.push(["tipoatv:"+t.id, t.icone+" Tipo: "+t.nome]));
   }
   visibleAnalysts().forEach(n=>escopos.push(["analista:"+n,"Analista: "+n]));
   el("repFilters").innerHTML=`
@@ -4608,7 +4646,7 @@ function renderRepControleGoLives(){
   // Aplica filtro de escopo se fizer sentido
   if(repScope.startsWith("lider:")){const l=repScope.slice(6); projs=projs.filter(p=>p.lider===l);}
   else if(repScope.startsWith("gp:")){const g=repScope.slice(3); projs=projs.filter(p=>p.gp===g);}
-  else if(repScope.startsWith("tipoproj:")){const t=repScope.slice(9); if(t!=="implantacao")projs=[];}
+  else if(repScope.startsWith("tipoatv:")){ /* filtro por tipo de atividade não se aplica ao Go-Live (relatório por projeto/data) */ }
   else if(repScope.startsWith("analista:")){const n=repScope.slice(9); projs=projs.filter(p=>(p.analistas||[]).includes(n));}
 
   // Linhas enriquecidas
@@ -4924,7 +4962,7 @@ function _descScope(s){
   if(s.startsWith("lider:"))return "Equipe: "+s.slice(6);
   if(s.startsWith("analista:"))return "Analista: "+s.slice(9);
   if(s.startsWith("gp:"))return "GP: "+s.slice(3);
-  if(s.startsWith("tipoproj:"))return "Tipo de projeto: "+s.slice(9);
+  if(s.startsWith("tipoatv:"))return "Tipo de atividade: "+s.slice(8);
   return s;
 }
 
@@ -5229,12 +5267,23 @@ function renderRepProjetos(){
   const dias=repDays(), fer=feriadosMap(); const ns=repAnalysts();
   if(!dias.length){el("repBody").innerHTML='<div class="rep-empty">Selecione um período válido.</div>';_lastRepRows=[];return;}
   // contagem cliente → {slots total, por analista}
+  // Quando o escopo é por TIPO DE ATIVIDADE, conta só os slots daquele tipo (projsTipo);
+  // caso contrário, conta todo o esforço em projeto (projs).
+  const tipoAtvScope = repScope.startsWith("tipoatv:") ? repScope.slice(8) : null;
   const por={};
   ns.forEach(n=>{const c=contarSlots(n,dias,fer);
-    Object.entries(c.projs).forEach(([proj,cnt])=>{
-      if(!por[proj])por[proj]={projeto:proj,slots:0,analistas:{}};
-      por[proj].slots+=cnt; por[proj].analistas[n]=(por[proj].analistas[n]||0)+cnt;
-    });
+    if(tipoAtvScope){
+      Object.entries(c.projsTipo||{}).forEach(([proj,m])=>{
+        const cnt=(m&&m[tipoAtvScope])||0; if(!cnt)return;
+        if(!por[proj])por[proj]={projeto:proj,slots:0,analistas:{}};
+        por[proj].slots+=cnt; por[proj].analistas[n]=(por[proj].analistas[n]||0)+cnt;
+      });
+    }else{
+      Object.entries(c.projs).forEach(([proj,cnt])=>{
+        if(!por[proj])por[proj]={projeto:proj,slots:0,analistas:{}};
+        por[proj].slots+=cnt; por[proj].analistas[n]=(por[proj].analistas[n]||0)+cnt;
+      });
+    }
   });
   // enriquece com info do cadastro de projeto
   const rows=Object.values(por).map(p=>{
@@ -5260,10 +5309,10 @@ function renderRepProjetos(){
       }
     });
   }
-  // Filtros adicionais (GP / tipoproj) — aplicados no resultado
+  // Filtros adicionais (GP / tipo de atividade) — aplicados no resultado
   let filtered=rows;
   if(repScope.startsWith("gp:")){const g=repScope.slice(3); filtered=rows.filter(r=>r.gp===g);}
-  else if(repScope.startsWith("tipoproj:")){const t=repScope.slice(9); filtered=rows.filter(r=>r.tipoId===t);}
+  else if(repScope.startsWith("tipoatv:")){ /* já restrito na agregação por tipo de atividade */ }
   const totalSlots=filtered.reduce((a,r)=>a+r.slots,0);
   const ativos=filtered.filter(r=>r.slots>0).length;
   const sorted=applySort(filtered.length?filtered:[]);
@@ -5322,10 +5371,8 @@ function renderRepGoLive(){
   let rows=linhas;
   if(repScope.startsWith("lider:")){const l=repScope.slice(6); rows=rows.filter(r=>r.lider===l);}
   else if(repScope.startsWith("gp:")){const g=repScope.slice(3); rows=rows.filter(r=>r.gp===g);}
-  else if(repScope.startsWith("tipoproj:")){
-    // Tipo do projeto: o relatório Go-Live só lista implantação, então só faz sentido manter se tipo=implantacao
-    const t=repScope.slice(9);
-    if(t!=="implantacao")rows=[];
+  else if(repScope.startsWith("tipoatv:")){
+    // Filtro por tipo de atividade não se aplica ao Go-Live (relatório por projeto/data) — mantém todos no escopo.
   }
   else if(repScope.startsWith("analista:")){
     const n=repScope.slice(9);
@@ -5605,7 +5652,7 @@ function kpiDays(){
   for(let d=new Date(a); d<=b; d=addDays(d,1)){const w=d.getDay(); if(w>=1&&w<=5)out.push(new Date(d));}
   return out;
 }
-function kpiAnalysts(){return _aplicaEscopo(visibleAnalysts(kpiTo||undefined), kpiScope);}
+function kpiAnalysts(){return _aplicaEscopo(visibleAnalysts(kpiTo||undefined), kpiScope, new Set((kpiDays()||[]).map(toISO)));}
 
 function renderKPIs(){
   renderKpiTabs();
@@ -5623,7 +5670,7 @@ function _renderKPIs(){
     lideresAtivos().forEach(l=>escopos.push(["lider:"+l,"Equipe: "+l]));
     gpsAtivos().forEach(g=>escopos.push(["gp:"+g,"GP: "+g]));
     SQUADS.forEach(s=>escopos.push(["squad:"+s,"Squad: "+s]));
-    TIPOS_ATIVIDADE.forEach(t=>escopos.push(["tipoproj:"+t.id, t.icone+" Tipo: "+t.nome]));
+    TIPOS_ATIVIDADE.forEach(t=>escopos.push(["tipoatv:"+t.id, t.icone+" Tipo: "+t.nome]));
   }
   visibleAnalysts().forEach(n=>escopos.push(["analista:"+n,"Analista: "+n]));
   el("kpiFilters").innerHTML=`
