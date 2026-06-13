@@ -902,8 +902,12 @@ function _setLoadingTorre(msg){
 function _torreFiltroHtml(){
   _torreAlertInitPeriodo();
   _torreAdInitPeriodo();
-  const de = torreView === "aderencia" ? torreAdDe : torreAlertDe;
-  const ate = torreView === "aderencia" ? torreAdAte : torreAlertAte;
+  if(!torreEstDe || !torreEstAte){ const h=new Date(); torreEstDe=toISO(h); torreEstAte=toISO(addDays(h,90)); }
+  if(!torreDscDe || !torreDscAte){ const h=new Date(); torreDscDe=toISO(addDays(h,-30)); torreDscAte=toISO(addDays(h,90)); }
+  let de = torreAlertDe, ate = torreAlertAte;
+  if(torreView === "aderencia"){ de = torreAdDe; ate = torreAdAte; }
+  else if(torreView === "esteira"){ de = torreEstDe; ate = torreEstAte; }
+  else if(torreView === "discovery"){ de = torreDscDe; ate = torreDscAte; }
   return `<div class="filtros-periodo" data-painel-periodo="torre" style="margin:0 0 14px 0">
     <span>Período de Análise:</span>
     <input type="date" id="torrePeriodoDataInicio" value="${enc(de || '')}">
@@ -932,6 +936,18 @@ function atualizarTorreAtiva(){
   const inicio = ini && ini.value, fim = fimEl && fimEl.value;
   if(!inicio || !fim){ alert("Por favor, selecione as datas de início e fim."); return Promise.resolve({}); }
   if(inicio > fim){ alert("A data inicial não pode ser maior que a data final."); return Promise.resolve({}); }
+  if(torreView === "esteira"){
+    torreEstDe = inicio; torreEstAte = fim; torreEstFiltroAplicado = true;
+    estPeriodoDe = inicio; estPeriodoAte = fim; estFiltroAplicado = true;
+    renderTorre();
+    return Promise.resolve({});
+  }
+  if(torreView === "discovery"){
+    torreDscDe = inicio; torreDscAte = fim; torreDscFiltroAplicado = true;
+    dscRecebDe = inicio; dscRecebAte = fim; dscFiltroAplicado = true;
+    renderTorre();
+    return Promise.resolve({});
+  }
   if(torreView === "aderencia"){ torreAdDe = inicio; torreAdAte = fim; }
   else { torreAlertDe = inicio; torreAlertAte = fim; }
   _setLoadingTorre("Carregando somente os buckets do período selecionado…");
@@ -1974,14 +1990,13 @@ function irTorre(v){
 }
 function renderTorre(){
   const host = el("torreBody"); if(!host) return;
-  // zera filtros para um panorama com a base completa (open* reseta de novo ao abrir os overlays)
-  try{ estSearch=""; estFilterEtapa=""; estFilterStatus=""; }catch(e){}
-  try{ dscSearch=""; dscFilterRito=""; dscFilterSituacao=""; dscRecebDe=""; dscRecebAte=""; }catch(e){}
   if(torreView === "esteira"){
-    host.innerHTML = `<div id="torreEstHost"></div>`;
+    host.innerHTML = _torreFiltroHtml() + `<div id="torreEstHost"></div>`;
+    if(!torreEstFiltroAplicado){ el("torreEstHost").innerHTML = _htmlSobDemanda("Escolha o período e clique em <b>Aplicar Filtro</b> para carregar o dashboard da Esteira somente com os projetos que possuem datas no período selecionado."); lucideRefresh(); return; }
     try{ renderEsteiraDashboard(el("torreEstHost")); }catch(e){ console.warn("[torre] esteira:",e); }
   } else if(torreView === "discovery"){
-    host.innerHTML = `<div id="torreDscHost"></div>`;
+    host.innerHTML = _torreFiltroHtml() + `<div id="torreDscHost"></div>`;
+    if(!torreDscFiltroAplicado){ el("torreDscHost").innerHTML = _htmlSobDemanda("Escolha o período e clique em <b>Aplicar Filtro</b> para carregar a Linha do Tempo Discovery somente com recebimentos no período selecionado."); lucideRefresh(); return; }
     try{ renderDiscoveryDashboard(el("torreDscHost")); }catch(e){ console.warn("[torre] discovery:",e); }
   } else if(torreView === "alertas"){
     host.innerHTML = _torreFiltroHtml() + `<div id="torreAlertHost"></div>`;
@@ -2001,15 +2016,19 @@ function renderTorre(){
       `<div class="torre-section"><div class="torre-section-h"><i data-lucide="search"></i>Linha do tempo · Discovery</div><div id="torreDscHost"></div></div>`+
       `<div class="torre-section"><div class="torre-section-h"><i data-lucide="git-compare-arrows"></i>BI · Previsto × Realizado</div><div id="torreAderenciaHost"></div></div>`+
       `<div class="torre-section"><div class="torre-section-h"><i data-lucide="shield-alert"></i>Alertas operacionais</div><div id="torreAlertHost"></div></div>`;
-    try{ renderEsteiraDashboard(el("torreEstHost")); }catch(e){ console.warn("[torre] esteira:",e); }
-    try{ renderDiscoveryDashboard(el("torreDscHost")); }catch(e){ console.warn("[torre] discovery:",e); }
-    try{ renderTorreAderencia(el("torreAderenciaHost"), true); }catch(e){ console.warn("[torre] previsto x realizado:",e); }
-    try{ renderTorreAlertas(el("torreAlertHost"), true); }catch(e){ console.warn("[torre] alertas:",e); }
+    if(torreEstFiltroAplicado){ try{ renderEsteiraDashboard(el("torreEstHost")); }catch(e){ console.warn("[torre] esteira:",e); } }
+    else el("torreEstHost").innerHTML = _htmlSobDemanda("Abra a aba Esteira, escolha o período e clique em <b>Aplicar Filtro</b>.");
+    if(torreDscFiltroAplicado){ try{ renderDiscoveryDashboard(el("torreDscHost")); }catch(e){ console.warn("[torre] discovery:",e); } }
+    else el("torreDscHost").innerHTML = _htmlSobDemanda("Abra a aba Discovery, escolha o período e clique em <b>Aplicar Filtro</b>.");
+    el("torreAderenciaHost").innerHTML = _htmlSobDemanda("Abra a aba BI Previsto × Realizado V2, escolha o período e clique em <b>Aplicar Filtro</b>.");
+    el("torreAlertHost").innerHTML = _htmlSobDemanda("Abra a aba Alertas, escolha o período e clique em <b>Aplicar Filtro</b>.");
   }
   lucideRefresh();
 }
 
 let torreAlertDe="", torreAlertAte="", torreAlertCrit="todos";
+let torreEstDe="", torreEstAte="", torreEstFiltroAplicado=false;
+let torreDscDe="", torreDscAte="", torreDscFiltroAplicado=false;
 function _torreAlertInitPeriodo(){
   if(torreAlertDe && torreAlertAte) return;
   const hoje=new Date();
@@ -7323,7 +7342,7 @@ function commitImportStrict(){
 function updateVersionLabel(){ const el2=el("footVersion"); if(el2)el2.textContent="v"+versaoAtual(); }
 
 /* ===================== Esteira de Projetos ===================== */
-let estView="dashboard", estSearch="", estFilterEtapa="", estFilterStatus="";
+let estView="dashboard", estSearch="", estFilterEtapa="", estFilterStatus="", estPeriodoDe="", estPeriodoAte="", estFiltroAplicado=false;
 
 function podeEditarEsteira(){ return canEditAction("esteira"); }
 function projetosImplantacao(){ return (REG.projetos||[]).filter(p=>p.tipo==="implantacao"||!p.tipo); }
@@ -7351,8 +7370,11 @@ function _estGlAtrasado(p){ const b=_estGlBase(p); return !!b && !p.goLiveRealiz
 
 function openEsteira(){
   if(!canViewAction("esteira")){ alert("Você não tem acesso à Esteira de Projetos."); irPara("home"); return; }
-  estView="dashboard"; estSearch=""; estFilterEtapa=""; estFilterStatus="";
+  estView="dashboard"; estSearch=""; estFilterEtapa=""; estFilterStatus=""; estFiltroAplicado=false;
+  if(!estPeriodoDe || !estPeriodoAte){ const h=new Date(); estPeriodoDe=toISO(h); estPeriodoAte=toISO(addDays(h,90)); }
   const se=el("estSearch"); if(se)se.value="";
+  const ed=el("estPeriodoDe"); if(ed)ed.value=estPeriodoDe;
+  const ea=el("estPeriodoAte"); if(ea)ea.value=estPeriodoAte;
   // popular filtros
   const fe=el("estFilterEtapa");
   if(fe)fe.innerHTML=`<option value="">Todas as etapas</option>`+ETAPAS.map(e=>`<option value="${e.id}">${e.label}</option>`).join("")+`<option value="_none">Não iniciado</option>`;
@@ -7360,10 +7382,29 @@ function openEsteira(){
   if(fs)fs.innerHTML=`<option value="">Todas as situações</option>`+STATUSES.map(s=>`<option value="${enc(s)}">${enc(s)}</option>`).join("");
   el("estViews").querySelectorAll("button").forEach(b=>b.classList.toggle("on",b.dataset.ev==="dashboard"));
   el("esteiraOverlay").classList.add("open");
-  try{ _estPrefillRealizado(); }catch(e){ console.warn("[esteira] prefill:",e); }
   renderEsteira();
 }
 function closeEsteira(){ const o=el("esteiraOverlay"); const was=o&&o.classList.contains("open"); if(o)o.classList.remove("open"); if(was) irPara("home"); }
+
+function _projetoTemDataEsteiraNoPeriodo(p, de, ate){
+  if(!de && !ate) return true;
+  const datas=[];
+  ESTEIRA_DATE_FIELDS.forEach(f=>{ if(p[f]) datas.push(p[f]); });
+  if(p.goLivePrevisto) datas.push(p.goLivePrevisto);
+  if(p.goLiveAjustado) datas.push(p.goLiveAjustado);
+  if(p.goLiveRealizado) datas.push(p.goLiveRealizado);
+  return datas.some(d=>(!de || d>=de) && (!ate || d<=ate));
+}
+function aplicarFiltroEsteira(){
+  const de=el("estPeriodoDe"), ate=el("estPeriodoAte");
+  estPeriodoDe = de && de.value || "";
+  estPeriodoAte = ate && ate.value || "";
+  if(!estPeriodoDe || !estPeriodoAte){ alert("Por favor, selecione as datas de início e fim da Esteira."); return; }
+  if(estPeriodoDe > estPeriodoAte){ alert("A data inicial não pode ser maior que a data final."); return; }
+  estFiltroAplicado = true;
+  try{ _estPrefillRealizado(); }catch(e){ console.warn("[esteira] prefill:",e); }
+  renderEsteira();
+}
 
 function esteiraFiltrados(){
   let arr=projetosImplantacao();
@@ -7378,6 +7419,7 @@ function esteiraFiltrados(){
     arr=arr.filter(p=>{ const eff=etapaEfetivaDe(p); return estFilterEtapa==="_none" ? eff==="" : eff===estFilterEtapa; });
   }
   if(estFilterStatus) arr=arr.filter(p=>(p.status||"")===estFilterStatus);
+  arr=arr.filter(p=>_projetoTemDataEsteiraNoPeriodo(p, estPeriodoDe, estPeriodoAte));
   // ordena por etapa efetiva (mais avançado primeiro) e nome
   return arr.sort((a,b)=>{
     const oa=ETAPA_BY_ID[etapaEfetivaDe(a)]?ETAPA_BY_ID[etapaEfetivaDe(a)].ordem:-1;
@@ -7388,6 +7430,7 @@ function esteiraFiltrados(){
 }
 
 function renderEsteira(){
+  if(!estFiltroAplicado){ const b=el("estBody"); if(b) b.innerHTML = _htmlSobDemanda("Escolha o período e clique em <b>Aplicar Filtro</b> para carregar a Esteira de Projetos somente com os projetos do período selecionado."); lucideRefresh(); return; }
   if(estView==="dashboard"){ renderEsteiraDashboard(); }
   else if(estView==="painel"){ renderEsteiraPainel(); }
   else if(estView==="previsto"){ renderEsteiraPrevReal(); }
@@ -7792,7 +7835,7 @@ function renderEsteiraPainel(){
    - Mostra os projetos que estão na fase de Discovery da esteira (não iniciado ou discovery).
    - Dashboard (kanban por rito) com o MESMO layout do dashboard da Esteira (est-dash-v2).
    - Tabela editável: data de cada rito, situação do Discovery e rito atual. */
-let dscView="dashboard", dscSearch="", dscFilterRito="", dscFilterSituacao="", dscRecebDe="", dscRecebAte="";
+let dscView="dashboard", dscSearch="", dscFilterRito="", dscFilterSituacao="", dscRecebDe="", dscRecebAte="", dscFiltroAplicado=false;
 
 function podeEditarDiscovery(){
   // Permissão por ação (matriz) é a base. Sem acesso → não edita.
@@ -7857,10 +7900,11 @@ function _dscRitoMeta(r, idx){
 
 function openDiscovery(){
   if(!canViewAction("discovery")){ alert("Você não tem acesso à Esteira de Discovery."); irPara("home"); return; }
-  dscView="dashboard"; dscSearch=""; dscFilterRito=""; dscFilterSituacao=""; dscRecebDe=""; dscRecebAte="";
+  dscView="dashboard"; dscSearch=""; dscFilterRito=""; dscFilterSituacao=""; dscFiltroAplicado=false;
+  if(!dscRecebDe || !dscRecebAte){ const h=new Date(); dscRecebDe=toISO(addDays(h,-30)); dscRecebAte=toISO(addDays(h,90)); }
   const se=el("dscSearch"); if(se)se.value="";
-  const rd=el("dscRecebDe"); if(rd)rd.value="";
-  const ra=el("dscRecebAte"); if(ra)ra.value="";
+  const rd=el("dscRecebDe"); if(rd)rd.value=dscRecebDe;
+  const ra=el("dscRecebAte"); if(ra)ra.value=dscRecebAte;
   const fr=el("dscFilterRito");
   if(fr)fr.innerHTML=`<option value="">Todas as atividades</option>`+DISCOVERY_RITOS.map(r=>`<option value="${r.id}">${enc(r.label)}</option>`).join("")+`<option value="_none">Não iniciado</option>`;
   const fs=el("dscFilterSituacao");
@@ -7870,6 +7914,16 @@ function openDiscovery(){
   renderDiscovery();
 }
 function closeDiscovery(){ const o=el("discoveryOverlay"); const was=o&&o.classList.contains("open"); if(o)o.classList.remove("open"); if(was) irPara("home"); }
+
+function aplicarFiltroDiscovery(){
+  const de=el("dscRecebDe"), ate=el("dscRecebAte");
+  dscRecebDe = de && de.value || "";
+  dscRecebAte = ate && ate.value || "";
+  if(!dscRecebDe || !dscRecebAte){ alert("Por favor, selecione as datas de recebimento inicial e final do Discovery."); return; }
+  if(dscRecebDe > dscRecebAte){ alert("A data inicial não pode ser maior que a data final."); return; }
+  dscFiltroAplicado = true;
+  renderDiscovery();
+}
 
 function discoveryFiltrados(){
   let arr=projetosEmDiscovery();
@@ -7902,6 +7956,7 @@ function discoveryFiltrados(){
 }
 
 function renderDiscovery(){
+  if(!dscFiltroAplicado){ const b=el("dscBody"); if(b) b.innerHTML = _htmlSobDemanda("Escolha o período de recebimento e clique em <b>Aplicar Filtro</b> para carregar a Linha do Tempo Discovery somente com os projetos do período selecionado."); lucideRefresh(); return; }
   if(dscView==="tabela") renderDiscoveryTabela();
   else if(dscView==="kpi") renderDiscoveryKpis();
   else renderDiscoveryDashboard();
@@ -8343,14 +8398,18 @@ function bind(){
     el("dscViews").querySelectorAll("button").forEach(x=>x.classList.toggle("on",x===b));
     renderDiscovery();
   }));
-  { let _dscSearchT=null; el("dscSearch").addEventListener("input",e=>{ dscSearch=e.target.value; clearTimeout(_dscSearchT); _dscSearchT=setTimeout(()=>{ renderDiscovery(); },180); }); }
-  el("dscFilterRito").addEventListener("change",e=>{ dscFilterRito=e.target.value; renderDiscovery(); });
-  el("dscFilterSituacao").addEventListener("change",e=>{ dscFilterSituacao=e.target.value; renderDiscovery(); });
-  el("dscRecebDe").addEventListener("change",e=>{ dscRecebDe=e.target.value; renderDiscovery(); });
-  el("dscRecebAte").addEventListener("change",e=>{ dscRecebAte=e.target.value; renderDiscovery(); });
-  { let _estSearchT=null; el("estSearch").addEventListener("input",e=>{ estSearch=e.target.value; clearTimeout(_estSearchT); _estSearchT=setTimeout(()=>{ renderEsteira(); },180); }); }
-  el("estFilterEtapa").addEventListener("change",e=>{ estFilterEtapa=e.target.value; renderEsteira(); });
-  el("estFilterStatus").addEventListener("change",e=>{ estFilterStatus=e.target.value; renderEsteira(); });
+  { let _dscSearchT=null; el("dscSearch").addEventListener("input",e=>{ dscSearch=e.target.value; clearTimeout(_dscSearchT); _dscSearchT=setTimeout(()=>{ if(dscFiltroAplicado) renderDiscovery(); },180); }); }
+  el("dscFilterRito").addEventListener("change",e=>{ dscFilterRito=e.target.value; if(dscFiltroAplicado) renderDiscovery(); });
+  el("dscFilterSituacao").addEventListener("change",e=>{ dscFilterSituacao=e.target.value; if(dscFiltroAplicado) renderDiscovery(); });
+  el("dscRecebDe").addEventListener("change",e=>{ dscRecebDe=e.target.value; dscFiltroAplicado=false; renderDiscovery(); });
+  el("dscRecebAte").addEventListener("change",e=>{ dscRecebAte=e.target.value; dscFiltroAplicado=false; renderDiscovery(); });
+  const dscApply=el("dscApplyFilter"); if(dscApply)dscApply.addEventListener("click",aplicarFiltroDiscovery);
+  { let _estSearchT=null; el("estSearch").addEventListener("input",e=>{ estSearch=e.target.value; clearTimeout(_estSearchT); _estSearchT=setTimeout(()=>{ if(estFiltroAplicado) renderEsteira(); },180); }); }
+  el("estFilterEtapa").addEventListener("change",e=>{ estFilterEtapa=e.target.value; if(estFiltroAplicado) renderEsteira(); });
+  el("estFilterStatus").addEventListener("change",e=>{ estFilterStatus=e.target.value; if(estFiltroAplicado) renderEsteira(); });
+  const estDe=el("estPeriodoDe"); if(estDe)estDe.addEventListener("change",e=>{ estPeriodoDe=e.target.value; estFiltroAplicado=false; renderEsteira(); });
+  const estAte=el("estPeriodoAte"); if(estAte)estAte.addEventListener("change",e=>{ estPeriodoAte=e.target.value; estFiltroAplicado=false; renderEsteira(); });
+  const estApply=el("estApplyFilter"); if(estApply)estApply.addEventListener("click",aplicarFiltroEsteira);
   el("actClose").addEventListener("click",closeActions);
   el("actOverlay").addEventListener("click",e=>{if(e.target.id==="actOverlay")closeActions();});
   // Modal de consulta do slot
