@@ -442,6 +442,14 @@
         <label>Situação</label>
         <select id="estFilterStatus" class="est-sel"></select>
       </div>
+      <div class="est-filterwrap">
+        <label>Período da etapa (de / até)</label>
+        <div style="display:flex;gap:6px">
+          <input type="date" id="estPeriodoDe" title="Etapas a partir de" style="border:1px solid var(--line2);background:#fff;border-radius:9px;padding:8px 10px;font-size:12px;width:138px;font-family:inherit">
+          <input type="date" id="estPeriodoAte" title="Etapas até" style="border:1px solid var(--line2);background:#fff;border-radius:9px;padding:8px 10px;font-size:12px;width:138px;font-family:inherit">
+        </div>
+      </div>
+      <button class="btn filtro-aplicar" id="estApplyFilter" type="button"><i data-lucide="filter"></i> Aplicar Filtro</button>
       <div class="est-savehint" id="estSaveHint"><i data-lucide="check"></i>Salvo na nuvem</div>
     </div>
     <div id="estBody" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
@@ -477,6 +485,7 @@
           <input type="date" id="dscRecebAte" title="Recebido até" style="border:1px solid var(--line2);background:#fff;border-radius:9px;padding:8px 10px;font-size:12px;width:138px;font-family:inherit">
         </div>
       </div>
+      <button class="btn filtro-aplicar" id="dscApplyFilter" type="button"><i data-lucide="filter"></i> Aplicar Filtro</button>
       <div class="est-savehint" id="dscSaveHint"><i data-lucide="check"></i>Salvo na nuvem</div>
     </div>
     <div id="dscBody" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
