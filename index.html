@@ -15,7 +15,6 @@
 <script src="https://cdn.jsdelivr.net/npm/lucide@0.469.0/dist/umd/lucide.min.js"></script>
 </head>
 <body>
-<script src="./js/script.js"></script>
 <!-- ===== Tela de login (cobre tudo até autenticar) ===== -->
 <div id="authScreen">
   <div class="auth-card">
@@ -477,5 +476,8 @@
     <div class="act-body" id="kpiBody"></div>
   </div>
 </div>
+
+<!-- Script no FINAL do body: garante que todo o DOM já existe antes do bind()/init -->
+<script src="./js/script.js"></script>
 </body>
 </html>
