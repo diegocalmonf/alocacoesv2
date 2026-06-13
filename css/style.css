@@ -1402,3 +1402,99 @@ body.viewmode-geral .grid-card[data-editable="1"]{cursor:default !important}
 .pc-empty{padding:40px 14px;text-align:center;color:var(--faint,#8a8a8a);font-size:13px;
   background:var(--paper,#fff);border:1px dashed var(--line,#ddd);border-radius:var(--r-md,12px)}
 
+
+/* ===================================================================
+   CADASTROS · refinamento visual (v1.52) — escopo: #actOverlay
+   Objetivo: leitura "de sistema" (labels claros, seções, linhas e selos
+   consistentes). Tudo escopado em #actOverlay p/ não afetar Relatórios/KPIs
+   que compartilham .act-body. Selos/chips de categoria são classes novas.
+   =================================================================== */
+
+/* — Label auxiliar (sufixo discreto ao lado do label principal) — */
+.lbl-soft{font-weight:600;color:var(--fn-faint);text-transform:none;letter-spacing:0;font-size:10.5px}
+
+/* — Cabeçalho de seção dentro do formulário (substitui divisores soltos) — */
+#actOverlay .fsec{grid-column:1/-1;margin:14px 0 2px;padding-top:15px;border-top:1px solid var(--line);display:flex;align-items:center}
+#actOverlay .fsec span{position:relative;padding-left:12px;font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--fn-slate);font-weight:800}
+#actOverlay .fsec span::before{content:"";position:absolute;left:0;top:50%;transform:translateY(-50%);width:3px;height:14px;border-radius:2px;background:var(--fn-orange)}
+
+/* — Formulários: coluna confortável e centralizada (não esticar até 1500px) — */
+#actOverlay .act-body .crumb,
+#actOverlay .act-body .proj-subtabs,
+#actOverlay .act-body .form-grid,
+#actOverlay .act-body > .hint,
+#actOverlay #projPaneDados,
+#actOverlay #projPanePrev{max-width:840px;margin-left:auto;margin-right:auto}
+#actOverlay .form-grid{gap:15px 16px}
+
+/* — Labels de campo: padrão claro de sistema (uppercase fino) — */
+#actOverlay .act-body .f>label:not(:has(input)){display:block;font-size:10.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--fn-faint);font-weight:700;margin-bottom:6px}
+
+/* — Inputs/selects consistentes (inclui type=number, antes sem estilo) — */
+#actOverlay .act-body input[type=text],
+#actOverlay .act-body input[type=email],
+#actOverlay .act-body input[type=date],
+#actOverlay .act-body input[type=number],
+#actOverlay .act-body select{
+  width:100%;background:#fff;border:1.5px solid #e3e6ec;border-radius:10px;
+  padding:11px 13px;font-size:14px;font-weight:500;color:var(--ink);
+  transition:border-color .12s,box-shadow .12s;
+}
+#actOverlay .act-body input:hover,#actOverlay .act-body select:hover{border-color:#cbd2dc}
+#actOverlay .act-body input:focus,#actOverlay .act-body select:focus{outline:none;border-color:var(--fn-orange);box-shadow:0 0 0 3px var(--fn-orange-bg)}
+
+/* — Migalha (crumb) e barra de ferramentas — */
+#actOverlay .act-body .crumb{font-weight:600;color:var(--fn-faint)}
+#actOverlay .act-body .crumb button{color:var(--fn-orange)}
+#actOverlay .act-toolbar{padding-bottom:12px;margin-bottom:14px;border-bottom:1px solid var(--line)}
+#actOverlay .act-toolbar h3{font-size:16px;letter-spacing:-.01em;color:var(--fn-ink)}
+#actOverlay .search{border:1.5px solid #e3e6ec;border-radius:10px;padding:9px 13px}
+#actOverlay .search:focus{outline:none;border-color:var(--fn-orange);box-shadow:0 0 0 3px var(--fn-orange-bg)}
+
+/* — Linhas das listas: hierarquia + acento à esquerda no hover — */
+#actOverlay .list{gap:8px}
+#actOverlay .list .row{border:1px solid #e7e9ee;border-radius:12px;padding:12px 14px;position:relative;overflow:hidden;transition:border-color .12s,box-shadow .12s,transform .12s}
+#actOverlay .list .row::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:transparent;transition:background .12s}
+#actOverlay .list .row:hover{border-color:#d6dbe3;box-shadow:0 1px 2px rgba(20,20,20,.04),0 6px 18px rgba(20,20,20,.06);transform:translateY(-1px)}
+#actOverlay .list .row:hover::before{background:var(--fn-orange)}
+#actOverlay .list .row .av{border-radius:10px}
+#actOverlay .list .row .meta{margin-top:3px;gap:8px}
+
+/* — Selo de Categoria (segmentação por nível) — cores metálicas — */
+.badge.b-cat{display:inline-flex;align-items:center;gap:6px}
+.badge.b-cat .cat-dot{width:7px;height:7px;border-radius:50%;flex:none;box-shadow:inset 0 0 0 1px rgba(0,0,0,.10)}
+.b-cat-platina{color:#3C4A57;background:linear-gradient(135deg,#F2F6F9,#E4ECF1);border-color:#C4D0DA}
+.b-cat-platina .cat-dot{background:linear-gradient(135deg,#AEC0CD,#7E92A2)}
+.b-cat-ouro{color:#7A5600;background:linear-gradient(135deg,#FBF2D2,#F3E2A6);border-color:#E5C56B}
+.b-cat-ouro .cat-dot{background:linear-gradient(135deg,#E9C766,#C99A12)}
+.b-cat-prata{color:#565E68;background:linear-gradient(135deg,#F2F3F5,#E5E8EC);border-color:#CDD2D8}
+.b-cat-prata .cat-dot{background:linear-gradient(135deg,#B2B9C1,#828A94)}
+.b-cat-bronze{color:#8A4A22;background:linear-gradient(135deg,#F7E8DA,#EFD3BD);border-color:#DDB088}
+.b-cat-bronze .cat-dot{background:linear-gradient(135deg,#CC9468,#92522A)}
+
+/* — Seletor de categoria (chips) no formulário de projeto — */
+.tier-pick{display:flex;gap:8px;flex-wrap:wrap}
+.tier-chip{
+  appearance:none;border:1.5px solid #e3e6ec;background:#fff;color:var(--fn-muted);
+  font:inherit;font-size:12.5px;font-weight:700;letter-spacing:.02em;
+  padding:8px 15px;border-radius:999px;cursor:pointer;
+  display:inline-flex;align-items:center;gap:8px;transition:.14s;
+}
+.tier-chip::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--line3);box-shadow:inset 0 0 0 1px rgba(0,0,0,.06);transition:.14s}
+.tier-chip:hover{border-color:#cbd2dc;color:var(--fn-ink)}
+.tier-chip:focus-visible{outline:none;box-shadow:0 0 0 3px var(--fn-orange-bg)}
+.tier-chip.t-platina::before{background:#9DB0BE}
+.tier-chip.t-ouro::before{background:#D2A521}
+.tier-chip.t-prata::before{background:#A6ADB6}
+.tier-chip.t-bronze::before{background:#BE7A45}
+.tier-chip.on{border-color:transparent;color:#fff;box-shadow:0 1px 2px rgba(20,20,20,.14),0 4px 10px rgba(20,20,20,.12)}
+.tier-chip.on::before{background:rgba(255,255,255,.92);box-shadow:0 0 0 1px rgba(255,255,255,.45)}
+.tier-chip.t-platina.on{background:linear-gradient(135deg,#7E92A2,#566776)}
+.tier-chip.t-ouro.on{background:linear-gradient(135deg,#DBB03C,#B07F12);color:#3a2c00}
+.tier-chip.t-ouro.on::before{background:rgba(58,44,0,.55)}
+.tier-chip.t-prata.on{background:linear-gradient(135deg,#9AA2AC,#6E7783)}
+.tier-chip.t-bronze.on{background:linear-gradient(135deg,#C07E47,#8C4E28)}
+
+@media (prefers-reduced-motion: reduce){
+  #actOverlay .list .row,#actOverlay .list .row:hover{transition:none;transform:none}
+}
