@@ -2592,7 +2592,8 @@ function renderHome(){
     {action:"relatorios", act:"el('reportsBtn').click()",   ic:"file-bar-chart-2", t:"Relatórios",                 d:"Alocação, squads, go-lives, mapa",         m:"abrir"},
     {action:"kpis",       act:"el('kpisBtn').click()",      ic:"line-chart",       t:"KPIs",                       d:"Indicadores executivos",                   m:"abrir"},
     {action:"cadastros",  act:"el('acoesBtn').click()",     ic:"settings-2",       t:"Ações & cadastros",          d:"Analistas, projetos, usuários, rituais",   m:"abrir"},
-  ].filter(c=>canViewAction(c.action));
+    {action:"nsforma", always:true, act:"window.open('https://capacitacaonstech.vercel.app','_blank','noopener')", ic:"graduation-cap", t:"NS Forma",         d:"Plataforma de capacitação NSTECH",         m:"abrir"},
+  ].filter(c=>c.always || canViewAction(c.action));
   host.innerHTML = cards.map(c=>`
     <button class="home-card" onclick="${c.act}">
       <div class="hc-head"><div class="hc-ic"><i data-lucide="${c.ic}"></i></div>
