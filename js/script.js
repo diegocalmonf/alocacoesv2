@@ -1963,6 +1963,12 @@ let torreView = "panorama";
 function setActiveNav(t){
   try{ document.querySelectorAll(".sb-link[data-nav]").forEach(l=>l.classList.toggle("active", l.dataset.nav===t)); }catch(e){}
 }
+/* Telas-página são mutuamente exclusivas: abrir uma fecha as outras (uma por vez). */
+function _fecharOutrasTelas(exceto){
+  ["esteiraOverlay","discoveryOverlay","repOverlay","kpiOverlay","actOverlay"].forEach(function(id){
+    if(id!==exceto){ try{ var o=el(id); if(o) o.classList.remove("open"); }catch(e){} }
+  });
+}
 function irPara(t){
   const m = el("appMain"); if(!m) return;
   if(!["home","grade","torre","esteira","discovery"].includes(t)) t = "home";
@@ -1973,8 +1979,7 @@ function irPara(t){
     t = "home";
   }
   // fecha as páginas-overlay sempre que navega
-  try{ el("esteiraOverlay").classList.remove("open"); }catch(e){}
-  try{ el("discoveryOverlay").classList.remove("open"); }catch(e){}
+  _fecharOutrasTelas(t==="esteira"?"esteiraOverlay":(t==="discovery"?"discoveryOverlay":null));
   m.dataset.screen = t; // 'esteira'/'discovery' deixam o appMain vazio atrás da página-overlay
   if(t === "grade"){ try{ ensureCapIntegration(); }catch(e){} }
   if(t === "home"){ try{ renderHome(); }catch(e){} }
@@ -3063,6 +3068,7 @@ let actTab="", actEditing=null /* item ou {__new:true} */, actSearch="", actShow
 let _cadastrosCarregados = {}; // tipo -> true; evita baixar o mesmo cadastro repetidamente na sessão
 function openActions(){
   if(!canViewCadastros()){alert("Você não tem acesso a Ações & Cadastros.");return;}
+  _fecharOutrasTelas("actOverlay");
   try{ensureCapIntegration();}catch(e){}
   actTab=""; actEditing=null; actSearch="";
   el("actOverlay").classList.add("open");
@@ -4585,6 +4591,7 @@ function _htmlRelatorioSobDemanda(){
 
 function openReports(){
   if(!canViewAction("relatorios")){ alert("Você não tem acesso aos Relatórios."); return; }
+  _fecharOutrasTelas("repOverlay");
   repTab="alocacao";
   _marcarRelatorioPendente();
   el("repOverlay").classList.add("open");
@@ -6153,6 +6160,7 @@ function renderKpiTabs(){
 
 function openKPIs(){
   if(!canViewAction("kpis")){ alert("Você não tem acesso aos KPIs."); return; }
+  _fecharOutrasTelas("kpiOverlay");
   try{ ensureCapIntegration(); }catch(e){}
   el("kpiOverlay").classList.add("open");
   aplicarDatasPadrao("kpiPeriodoDataInicio", "kpiPeriodoDataFim");
@@ -8382,6 +8390,17 @@ function bind(){
   { const nt=el("navToggle"); if(nt)nt.addEventListener("click",()=>el("sidebar").classList.toggle("open"));
     // clicar em qualquer .sb-link fecha o drawer no mobile
     document.querySelectorAll(".sb-link").forEach(l=>l.addEventListener("click",()=>{if(window.innerWidth<=900)el("sidebar").classList.remove("open");})); }
+  // sidebar recolhível (desktop): encolhe para 64px e o conteúdo ocupa o resto
+  { const sc=el("sbCollapse"), app=document.body;
+    if(sc&&app){
+      try{ if(localStorage.getItem("nsaloc.sbCollapsed")==="1"){ app.classList.add("sb-collapsed"); sc.title="Expandir menu"; sc.setAttribute("aria-label","Expandir menu"); } }catch(e){}
+      sc.addEventListener("click",()=>{
+        const col=app.classList.toggle("sb-collapsed");
+        sc.title=col?"Expandir menu":"Recolher menu";
+        sc.setAttribute("aria-label",sc.title);
+        try{ localStorage.setItem("nsaloc.sbCollapsed",col?"1":"0"); }catch(e){}
+      });
+    } }
   // clicar na versão do rodapé abre a aba Releases
   el("reportsBtn").addEventListener("click",openReports);
   el("repClose").addEventListener("click",closeReports);
