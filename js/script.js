@@ -1715,30 +1715,49 @@ function renderHeader(){
   el("liderLine").innerHTML=(l?`Líder de implantação: <b>${l}</b>`:`<span style="color:var(--faint)">Sem líder vinculado</span>`)+(sq?` &nbsp;${squadChipHTML(sq,true)}`:"");
   try{ el("liderLine").innerHTML += capacBadgeFor(consultor); lucideRefresh(); }catch(e){}
 }
-function renderStats(){
+/* Fase 3 — varredura única de escopo. Computa filled/livre/proj/projs para um
+   conjunto de analistas no período atual. Duas otimizações sobre o laço por célula:
+   (1) projeto verificado por Set.has() — O(1) — no lugar de REG.projetos.some() — O(P);
+   (2) foraDoEscopoAtual memoizado por nome de projeto: o resultado depende só de
+       r.cliente durante um render, e muitas células compartilham o mesmo projeto,
+       então cada projeto roda o REG.projetos.find() interno uma só vez.
+   Retorna também total/wdays/work para os chamadores não recomputarem. */
+function _scanEscopo(analistas){
   const work=SLOTS.filter(s=>!s.lunch);
   const wdays=periodWorkDays().map(toISO);
-  const ehProjeto=cli=>!!(cli && cli!=="Livre" && REG.projetos.some(p=>p.nome===cli));
+  const projSet=new Set((REG.projetos||[]).map(p=>p.nome));
+  const foraCache=new Map(); // nome do projeto -> bool (cache por render)
+  const fora=r=>{
+    const cli=r.cliente;
+    if(foraCache.has(cli)) return foraCache.get(cli);
+    const v=foraDoEscopoAtual(r);
+    foraCache.set(cli,v);
+    return v;
+  };
+  let filled=0,livre=0,proj=0;const projs=new Set();
+  for(const n of analistas){
+    for(const iso of wdays){
+      for(const s of work){
+        const r=DATA[key(n,iso,s.id)];
+        if(ehSlotLivre(r)){livre++;continue;}
+        filled++;
+        const cli=r.cliente;
+        if(cli && cli!=="Livre" && projSet.has(cli) && !fora(r)){ proj++; projs.add(cli); }
+      }
+    }
+  }
+  return {filled,livre,proj,projs,total:analistas.length*wdays.length*work.length,wdays,work};
+}
+function renderStats(){
   if(viewMode==="geral"){
     const ns=gradeAnalysts();
-    let proj=0,livre=0,filled=0;const projs=new Set();
-    ns.forEach(n=>wdays.forEach(iso=>work.forEach(s=>{const r=DATA[key(n,iso,s.id)];
-      if(ehSlotLivre(r)){livre++;return;}
-      filled++;
-      if(ehProjeto(r.cliente)&&!foraDoEscopoAtual(r)){proj++;projs.add(r.cliente);}
-    })));
-    const total=ns.length*wdays.length*work.length;
+    const {filled,livre,projs,total}=_scanEscopo(ns);
     el("stats").innerHTML=[[ns.length,"Analistas"],[total?Math.round(filled/total*100)+"%":"—","Ocupação"],[projs.size,"Projetos ativos"],[livre,"Slots livres"]]
       .map(([n,l])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
     return;
   }
   if(!consultor){el("stats").innerHTML="";return;}
-  let proj=0,livre=0,filled=0;const projs=new Set();
-  wdays.forEach(iso=>work.forEach(s=>{const r=DATA[key(consultor,iso,s.id)];
-    if(ehSlotLivre(r)){livre++;return;}
-    filled++;
-    if(ehProjeto(r.cliente)&&!foraDoEscopoAtual(r)){proj++;projs.add(r.cliente);}
-  }));
+  const {filled,livre,proj,projs,wdays,work}=_scanEscopo([consultor]);
   el("stats").innerHTML=[[filled+"/"+(wdays.length*work.length),"Slots preench."],[proj,"Em projeto"],[projs.size,"Projetos"],[livre,"Livres"]]
     .map(([n,l])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join("");
   _atualizaContextoSidebar();
@@ -1748,17 +1767,8 @@ function renderStats(){
 function _atualizaContextoSidebar(){
   const e=el("sbContext"); if(!e)return;
   try{
-    const ns=gradeAnalysts();
-    let allocCount=0; const projs=new Set();
-    const wdays=periodWorkDays().map(toISO);
-    const work=SLOTS.filter(s=>!s.lunch);
-    ns.forEach(n=>wdays.forEach(iso=>work.forEach(s=>{
-      const r=DATA[key(n,iso,s.id)];
-      if(ehSlotLivre(r))return;
-      allocCount++;
-      if(r.cliente && r.cliente!=="Livre" && REG.projetos.some(p=>p.nome===r.cliente) && !foraDoEscopoAtual(r))projs.add(r.cliente);
-    })));
-    e.textContent=`${allocCount.toLocaleString("pt-BR")} alocação(ões) · ${projs.size} projeto(s)`;
+    const {filled,projs}=_scanEscopo(gradeAnalysts()); // allocCount == filled (slots preenchidos)
+    e.textContent=`${filled.toLocaleString("pt-BR")} alocação(ões) · ${projs.size} projeto(s)`;
   }catch(err){e.textContent="";}
 }
 
@@ -1794,7 +1804,6 @@ function renderBoardAnalista(){
     body+=`</tr>`;
   });
   el("boardHost").innerHTML=`<div class="board" style="overflow:auto"><table style="${tableStyle}"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
-  el("boardHost").querySelectorAll(".cell").forEach(c=>c.addEventListener("click",()=>{if(c.dataset.locked)return;openAlloc(dec(c.dataset.nome),c.dataset.iso,c.dataset.slot);}));
 }
 
 /* ---- Visão GERAL · DIA: Analista (linhas) × Slot (colunas), editável ---- */
@@ -1821,7 +1830,6 @@ function renderGeralDia(){
   const cap=fn?` · ⚑ ${fn}`:"";
   el("boardHost").innerHTML=`<div class="gboard"><table class="gmx"><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
     <div style="font-size:11.5px;color:var(--faint);padding:8px 4px 0">Clique numa célula para alocar · ${DOW[refDate.getDay()]}, ${fmtDM(refDate)}${cap}</div>`;
-  el("boardHost").querySelectorAll(".gcell").forEach(c=>c.addEventListener("click",()=>{if(c.dataset.locked)return;openAlloc(dec(c.dataset.nome),c.dataset.iso,c.dataset.slot);}));
 }
 
 /* ---- Visão GERAL · SEMANA/MÊS: para cada analista, a grade COMPLETA de Slot × Dias ----
@@ -1880,7 +1888,6 @@ function renderGeralResumo(){
   el("boardHost").innerHTML=html;
   // clique em qualquer célula abre o modal de alocação para o analista correto
   // (na visão Geral, openAlloc pede confirmação antes de editar — escolha do produto)
-  el("boardHost").querySelectorAll(".cell").forEach(c=>c.addEventListener("click",()=>{if(c.dataset.locked)return;openAlloc(dec(c.dataset.nome),c.dataset.iso,c.dataset.slot);}));
 }
 
 /* ---- Visão COMPACTA por projeto: só os analistas e slots do projeto filtrado ----
@@ -1941,13 +1948,27 @@ function renderGradeProjetoCompacta(){
     <div class="pc-note">Mostrando todas as alocações deste projeto (todas as datas). A navegação de período não se aplica neste modo — limpe o filtro para voltar à grade.</div>
     ${blocos}
   </div>`;
-  host.querySelectorAll(".pc-cell").forEach(c=>c.addEventListener("click",()=>{
-    openAlloc(dec(c.dataset.nome), c.dataset.iso, c.dataset.slot);
-  }));
   lucideRefresh();
 }
 
+/* Fase 2 — delegação de evento única no #boardHost. O host é estável (só o innerHTML
+   muda entre renders), então UM listener no container cobre todas as células de todas
+   as visões (.cell, .gcell, .pc-cell) sem reanexar milhares de handlers a cada render.
+   closest() trata também cliques nos elementos-filho (chips) dentro da célula. */
+let _boardDelegationInstalled=false;
+function _ensureBoardDelegation(){
+  if(_boardDelegationInstalled) return;
+  const host=el("boardHost"); if(!host) return;
+  host.addEventListener("click",ev=>{
+    const c=ev.target.closest(".cell,.gcell,.pc-cell");
+    if(!c || !host.contains(c)) return;
+    if(c.dataset.locked) return; // .pc-cell nunca tem data-locked → no-op seguro
+    openAlloc(dec(c.dataset.nome), c.dataset.iso, c.dataset.slot);
+  });
+  _boardDelegationInstalled=true;
+}
 function renderBoard(){
+  _ensureBoardDelegation();
   if(gradeProjFilter){ renderGradeProjetoCompacta(); return; }
   if(viewMode==="geral"){ if(period==="dia")renderGeralDia(); else renderGeralResumo(); }
   else renderBoardAnalista();
@@ -2597,7 +2618,7 @@ function exportarAlertasTorre(){
   const blob=new Blob([csv],{type:"text/csv;charset=utf-8"});
   const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="torre-alertas-operacionais.csv";a.click();setTimeout(()=>URL.revokeObjectURL(a.href),500);
 }
-function renderHome(){
+function renderHome(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
   const host = el("homeCards"); if(!host) return;
   const nA = ((typeof REG==="object" && REG && REG.analistas) || []).length;
   const nP = ((typeof REG==="object" && REG && REG.projetos)  || []).length;
@@ -2633,15 +2654,9 @@ function lucideRefresh(){
   });
 }
 // observer: sempre que markup mudar dentro de áreas que usam ícones, refazemos
-function _installLucideObserver(){
-  if(!window.MutationObserver||!window.lucide)return;
-  const obs=new MutationObserver(()=>{
-    // debounce simples
-    if(_installLucideObserver._t)cancelAnimationFrame(_installLucideObserver._t);
-    _installLucideObserver._t=requestAnimationFrame(lucideRefresh);
-  });
-  obs.observe(document.body,{childList:true,subtree:true});
-}
+/* Fase 4: o MutationObserver global (que varria o document.body inteiro a cada
+   mutacao) foi removido. Os icones sao cobertos pelas chamadas explicitas a
+   lucideRefresh() em cada funcao de render. */
 
 /* ===================== modal alocar ===================== */
 // Constrói o select de Projeto. Lista APENAS projetos cadastrados, separados em
@@ -3173,7 +3188,7 @@ function renderTabs(){
 }
 function renderActions(){renderTabs();lucideRefresh();if(!actTab){renderCadastroHome();return;}if(actTab==="usuarios"){renderUsers();return;}if(actTab==="importar"){renderImporter();return;}if(actTab==="auditoria"){renderAuditoria();return;}if(actEditing){renderForm();}else{renderList();}}
 
-function renderList(){
+function renderList(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
   const b=el("actBody");
   const addLabel={projetos:"+ Novo projeto",analistas:"+ Novo analista",lideres:"+ Novo líder",gps:"+ Novo gerente",atividades:"+ Nova atividade",feriados:"+ Novo feriado"}[actTab];
   let items, rows, total=0, ocultos=0;
@@ -3545,7 +3560,7 @@ function _pvAplicar(p){
   });
 }
 
-function renderForm(){
+function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
   const b=el("actBody"), isNew=!!actEditing.__new;
   if(actTab==="projetos"){
     const p=isNew?{nome:"",tipo:"implantacao",segmentacao:"Essential",categoria:"",status:"Em andamento",gp:"",lider:"",analistas:[],goLivePrevisto:"",goLiveAjustado:"",goLiveRealizado:"",goLiveModalidade:"",goLiveSituacao:"Planejado",dtDiscovery:""}:actEditing;
@@ -4935,7 +4950,7 @@ function contarSlots(nome,dias,fer){
 }
 
 /* tabs do relatório */
-function renderReports(){
+function renderReports(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
   // Tabs
   const tabs=[["alocacao","Alocação por Analista"],["squads","Squads"],["mapa","Mapa de Slots"],["mapaproj","Mapa de Projeto"],["livres","Slots Livres"],["projetos","Alocação por Projetos"],["golive","Gestão de Go-Live"],["golivectrl","Controle de Go-Lives"],["ferias","Férias"],["pendobs","Pendências de obs."]]
     .concat(canViewAction("prealoc")?[["aderencia","Aderência ao Plano"]]:[])
@@ -6195,7 +6210,7 @@ function kpiDays(){
 }
 function kpiAnalysts(){return _aplicaEscopo(visibleAnalysts(kpiTo||undefined), kpiScope, new Set((kpiDays()||[]).map(toISO)));}
 
-function renderKPIs(){
+function renderKPIs(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
   renderKpiTabs();
   try{ _renderKPIs(); }
   catch(e){
@@ -6960,7 +6975,7 @@ function _renderKPIs(){
 const IMP_COLS_CANONICAS = ["analista","data","slot","atividade","projeto","observacao"];
 const IMP_COLS_OBRIGATORIAS = ["analista","data","slot","atividade"];
 
-function renderImporter(){
+function renderImporter(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
   const b=el("actBody");
   if(!isAdmin()){b.innerHTML='<div class="rep-empty">Apenas administradores podem importar.</div>';return;}
   if(typeof XLSX==="undefined"){b.innerHTML='<div class="rep-empty">Biblioteca de leitura de Excel não carregou. Verifique sua conexão e recarregue (Ctrl+Shift+R).</div>';return;}
@@ -7078,7 +7093,7 @@ function _mapHeaders(headers){
   return map;
 }
 
-function renderImportSteps(){
+function renderImportSteps(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
   const a=el("impArea");
   const headers=_impSrc.headers;
   const mapping=_mapHeaders(headers);
@@ -8529,7 +8544,7 @@ function bind(){
   if(!refDate){refDate=new Date(); while(refDate.getDay()===0||refDate.getDay()===6)refDate=addDays(refDate,1);}
   weekStart=monday(refDate);
   bind();
-  lucideRefresh(); _installLucideObserver();
+  lucideRefresh(); /* Fase 4: observador global removido; cobertura agora explicita por funcao */
 
   // 2) fluxo de autenticação (porteiro) — só mostra dados após login
   // === BLINDAGEM DE PRODUÇÃO ===
