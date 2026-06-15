@@ -610,13 +610,13 @@ table.gmx th:last-child,table.gmx td:last-child{border-right:none}
 .modal:not(.big) .modal-h{flex:none}
 .modal:not(.big) .modal-f{flex:none}
 .modal:not(.big) .modal-b{flex:1 1 auto;min-height:0;overflow-y:auto}
-/* Trocar senha e Incluir alocação: formulário centralizado (vertical + horizontal)
-   dentro do modal em tela cheia, numa coluna confortável. "safe center" evita
-   cortar o topo quando o conteúdo é mais alto que a área visível (rola normal). */
-#pwdOverlay .modal-b,
-#incOverlay .modal-b{display:flex;flex-direction:column;align-items:center;justify-content:safe center}
-#pwdOverlay .modal-b > *,
-#incOverlay .modal-b > *{width:100%;max-width:520px}
+/* Trocar senha: formulário centralizado (vertical + horizontal) na tela cheia. */
+#pwdOverlay .modal-b{display:flex;flex-direction:column;align-items:center;justify-content:safe center}
+#pwdOverlay .modal-b > *{width:100%;max-width:520px}
+/* Incluir alocação: volta ao formato ORIGINAL (modal compacto, centralizado,
+   altura pelo conteúdo, com corpo rolável até 92vh). Anula o tela-cheia. */
+#incOverlay.open{padding:18px}
+#incOverlay .modal{width:100%;max-width:460px;height:auto;max-height:92vh;border:1px solid var(--line);border-radius:var(--r-xl)}
 @keyframes pop{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
 .modal-h{padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
 .modal-h .t{font-family:'Inter',system-ui,-apple-system,sans-serif;font-weight:700;font-size:19px;letter-spacing:-.01em;line-height:1.2;display:flex;align-items:center;gap:9px}
