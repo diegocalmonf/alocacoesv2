@@ -595,25 +595,28 @@ table.gmx th:last-child,table.gmx td:last-child{border-right:none}
 /* modal base */
 /* ============== MODAIS ============== */
 .overlay{position:fixed;inset:0;background:rgba(20,20,20,.4);backdrop-filter:blur(4px);display:none;align-items:center;justify-content:center;z-index:90;padding:18px}
-.overlay.open{display:flex;animation:fade .15s ease-out}
+.overlay.open{display:flex;animation:fade .15s ease-out;padding:0}
 @keyframes fade{from{opacity:0}to{opacity:1}}
 .modal{background:var(--card);border:1px solid var(--line);border-radius:var(--r-xl);box-shadow:var(--shadow-lg);width:100%;max-width:460px;overflow:hidden;animation:pop .18s cubic-bezier(.16,1,.3,1)}
 .modal.big{max-width:1500px;width:96vw;height:92vh;max-height:92vh;display:flex;flex-direction:column}
-/* === Telas em tela cheia: Esteira de Projetos, Relatórios, KPIs e Cadastros ===
-   Estas telas devem ocupar 100% da viewport (sem faixas sobrando nas bordas).
-   Especificidade por ID vence o .modal.big base e o override mobile. */
-#esteiraOverlay,#discoveryOverlay,#repOverlay,#kpiOverlay,#actOverlay{padding:0}
-#esteiraOverlay .modal.big,
-#discoveryOverlay .modal.big,
-#repOverlay .modal.big,
-#kpiOverlay .modal.big,
-#actOverlay .modal.big{width:100%;max-width:100%;height:100%;max-height:100%;border-radius:0;border:none}
+/* === Padrão unificado: TODO modal ocupa 100% da tela (igual Relatórios) ===
+   Vale para .modal e .modal.big. A especificidade (.overlay .modal.big = 0,3,0)
+   vence o .modal.big base e os overrides de mobile, sem depender de IDs. */
+.overlay .modal,
+.overlay .modal.big{width:100%;max-width:100%;height:100%;max-height:100%;border-radius:0;border:none}
 /* Modais padrão (não tela-cheia): limita a altura à viewport e rola o corpo internamente,
    mantendo cabeçalho e rodapé (botões de ação) sempre visíveis. */
-.modal:not(.big){display:flex;flex-direction:column;max-height:92vh}
+.modal:not(.big){display:flex;flex-direction:column;height:100%;max-height:100%}
 .modal:not(.big) .modal-h{flex:none}
 .modal:not(.big) .modal-f{flex:none}
 .modal:not(.big) .modal-b{flex:1 1 auto;min-height:0;overflow-y:auto}
+/* Trocar senha e Incluir alocação: formulário centralizado (vertical + horizontal)
+   dentro do modal em tela cheia, numa coluna confortável. "safe center" evita
+   cortar o topo quando o conteúdo é mais alto que a área visível (rola normal). */
+#pwdOverlay .modal-b,
+#incOverlay .modal-b{display:flex;flex-direction:column;align-items:center;justify-content:safe center}
+#pwdOverlay .modal-b > *,
+#incOverlay .modal-b > *{width:100%;max-width:520px}
 @keyframes pop{from{opacity:0;transform:translateY(10px) scale(.97)}to{opacity:1;transform:none}}
 .modal-h{padding:20px 24px 16px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
 .modal-h .t{font-family:'Inter',system-ui,-apple-system,sans-serif;font-weight:700;font-size:19px;letter-spacing:-.01em;line-height:1.2;display:flex;align-items:center;gap:9px}
@@ -1363,17 +1366,6 @@ body.viewmode-geral .grid-card[data-editable="1"]{cursor:default !important}
 
 @media(max-width:980px){.pvbi-layout{grid-template-columns:1fr}.pvbi-bar{grid-template-columns:112px 1fr 48px}}
 
-/* ===== Fase 2b: Esteira/Discovery como PÁGINAS dentro do shell ===== */
-/* O overlay deixa de flutuar sobre tudo e passa a ocupar a área de conteúdo,
-   ao lado da sidebar, sem backdrop. Sem mover DOM: ids/bindings intactos. */
-#esteiraOverlay.as-page.open,#discoveryOverlay.as-page.open{
-  position:fixed;left:var(--sidebar-w);top:0;right:0;bottom:0;
-  background:var(--paper);backdrop-filter:none;-webkit-backdrop-filter:none;padding:0;
-  align-items:stretch;justify-content:stretch;animation:none;
-}
-@media(max-width:900px){
-  #esteiraOverlay.as-page.open,#discoveryOverlay.as-page.open{left:0}
-}
 /* ===== Matriz de permissões por ação (card de edição de usuário) ===== */
 .perm-matrix{background:#fff;border:1px solid var(--line);border-radius:11px;padding:12px 13px;margin-top:2px}
 .perm-matrix .pm-head{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:700;color:var(--fn-ink,#1f2430);margin-bottom:3px}
