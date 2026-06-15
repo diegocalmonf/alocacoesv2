@@ -7439,6 +7439,10 @@ function closeEsteira(){ const o=el("esteiraOverlay"); const was=o&&o.classList.
 
 function _projetoTemDataEsteiraNoPeriodo(p, de, ate){
   if(!de && !ate) return true;
+  // Exceção (opção D): projeto ainda em etapa Discovery (ordem ≤ 0) nunca é escondido
+  // pelo período — caso contrário sumiria por só ter datas no passado.
+  const _ord = ETAPA_BY_ID[etapaEfetivaDe(p)] ? ETAPA_BY_ID[etapaEfetivaDe(p)].ordem : -1;
+  if(_ord <= 0) return true;
   const datas=[];
   ESTEIRA_DATE_FIELDS.forEach(f=>{ if(p[f]) datas.push(p[f]); });
   if(p.goLivePrevisto) datas.push(p.goLivePrevisto);
@@ -7991,8 +7995,14 @@ function discoveryFiltrados(){
   if(dscFilterSituacao) arr=arr.filter(p=>(p.dscSituacao||"")===dscFilterSituacao);
   if(dscRecebDe || dscRecebAte){
     arr=arr.filter(p=>{
-      const r=p.dtRecebimento||"";
-      if(!r) return false;                 // sem data de recebimento não entra quando há filtro de período
+      // Data de referência para o período: recebimento; se vazio, cai para a 1ª data
+      // de rito lançada e, por fim, para o início do Discovery (dtDiscovery).
+      let r=p.dtRecebimento||"";
+      if(!r){
+        const ritoDatas=DISCOVERY_RITOS.map(rt=>dscRitoData(p,rt.id)).filter(Boolean).sort();
+        r=ritoDatas[0]||p.dtDiscovery||"";
+      }
+      if(!r) return true;                  // sem nenhum sinal de data, não esconde o projeto de Discovery
       if(dscRecebDe && r<dscRecebDe) return false;
       if(dscRecebAte && r>dscRecebAte) return false;
       return true;
