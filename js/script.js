@@ -1569,7 +1569,10 @@ function chipForaEscopoHTML(classe){
    cada célula. 100% read-only — não grava nada. A resolução de conflitos é Fase 4. */
 let _showPrevisto = true;   // toggle da camada previsto na grade
 function _normProj(s){ return String(s==null?"":s).trim().toLowerCase(); }
-function _temConteudo(r){ return !!(r && (r.cliente || r.atividade)); }
+// Conteúdo "real" = registro que NÃO é slot livre. O placeholder "Livre"
+// (cliente/atividade = "Livre") e a ausência de registro contam como vazio,
+// para não vazarem como previsto/realizado/alocação nas métricas de aderência.
+function _temConteudo(r){ return !!r && !ehSlotLivre(r); }
 // Estados possíveis: "vazio" | "previsto" | "extra" | "confirmado" | "conflito"
 //  • previsto   = planejado, sem realizado
 //  • extra      = realizado sem previsto (fora do plano)
@@ -2457,14 +2460,14 @@ function _torreAdRows(){
       else if(_torreAdTemRealizadoMesmoProjetoFora(c,iso,slot,prev.cliente)) st="reprogramado";
       else st="naoRealizado";
     }
-    rows.push({analista:c,iso,slot,status:st,prevProj:prev.cliente||"",prevAtv:prev.atividade||"",realProj:real.cliente||"",realAtv:real.atividade||"",projeto:projetoRef});
+    rows.push({analista:c,iso,slot,status:st,temPrev:temP,temReal:temR,prevProj:prev.cliente||"",prevAtv:prev.atividade||"",realProj:real.cliente||"",realAtv:real.atividade||"",projeto:projetoRef});
   });
   return rows.sort((a,b)=>a.iso.localeCompare(b.iso)||a.analista.localeCompare(b.analista,"pt")||a.slot.localeCompare(b.slot));
 }
 function _torreAdKpis(rows){
   const n=s=>rows.filter(r=>r.status===s).length;
-  const previsto=rows.filter(r=>r.prevProj||r.prevAtv).length;
-  const realizado=rows.filter(r=>r.realProj||r.realAtv).length;
+  const previsto=rows.filter(r=>r.temPrev).length;
+  const realizado=rows.filter(r=>r.temReal).length;
   const confirmado=n("confirmado"), naoRealizado=n("naoRealizado"), conflito=n("conflito"), extra=n("extra"), atv=n("atividadeDivergente"), reprog=n("reprogramado"), futuro=n("planejadoFuturo");
   const ader=previsto?Math.round((confirmado/previsto)*100):100;
   const desvioBase=previsto+extra;
@@ -2475,7 +2478,7 @@ function _torreAdAgg(rows, campo){
   const m={};
   rows.forEach(r=>{
     const k=r[campo]||"—"; if(!m[k]) m[k]={nome:k,total:0,previsto:0,confirmado:0,desvios:0};
-    m[k].total++; if(r.prevProj||r.prevAtv)m[k].previsto++; if(r.status==="confirmado")m[k].confirmado++; if(!["confirmado","planejadoFuturo"].includes(r.status))m[k].desvios++;
+    m[k].total++; if(r.temPrev)m[k].previsto++; if(r.status==="confirmado")m[k].confirmado++; if(!["confirmado","planejadoFuturo"].includes(r.status))m[k].desvios++;
   });
   return Object.values(m).map(x=>Object.assign(x,{ader:x.previsto?Math.round((x.confirmado/x.previsto)*100):0})).sort((a,b)=>b.desvios-a.desvios||a.nome.localeCompare(b.nome,"pt"));
 }
@@ -2550,7 +2553,7 @@ function _torreAdStack(k){
 }
 function _torreAdTrend(rows){
   const m={};
-  rows.forEach(r=>{ const w=_torreAdWeekKey(r.iso); if(!m[w])m[w]={semana:w,prev:0,conf:0,desv:0}; if(r.prevProj||r.prevAtv)m[w].prev++; if(r.status==="confirmado")m[w].conf++; if(!["confirmado","planejadoFuturo"].includes(r.status))m[w].desv++; });
+  rows.forEach(r=>{ const w=_torreAdWeekKey(r.iso); if(!m[w])m[w]={semana:w,prev:0,conf:0,desv:0}; if(r.temPrev)m[w].prev++; if(r.status==="confirmado")m[w].conf++; if(!["confirmado","planejadoFuturo"].includes(r.status))m[w].desv++; });
   return Object.values(m).map(x=>Object.assign(x,{ader:_torreAdFmtPct(x.conf,x.prev)}));
 }
 function _torreAdTrendHtml(rows){
