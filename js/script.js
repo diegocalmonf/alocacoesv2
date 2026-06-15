@@ -1952,7 +1952,21 @@ function renderBoard(){
   if(viewMode==="geral"){ if(period==="dia")renderGeralDia(); else renderGeralResumo(); }
   else renderBoardAnalista();
 }
-function renderAll(){if(ALLOC_WINDOWED_READ){try{_carregarJanela(mesesVisiveis());}catch(e){}}try{_carregarJanelaPrev(mesesVisiveis());}catch(e){}renderControls();renderHeader();renderStats();renderBoard();updateVersionLabel();try{renderHome();}catch(e){}lucideRefresh();}
+/* Corpo síncrono do render. Não chamar diretamente em fluxos normais — use renderAll()
+   (que coalesce múltiplas chamadas em um único frame). Disponível para casos pontuais
+   que precisem do DOM já atualizado no mesmo tick. */
+function _renderAllNow(){if(ALLOC_WINDOWED_READ){try{_carregarJanela(mesesVisiveis());}catch(e){}}try{_carregarJanelaPrev(mesesVisiveis());}catch(e){}renderControls();renderHeader();renderStats();renderBoard();updateVersionLabel();try{renderHome();}catch(e){}lucideRefresh();}
+/* Coalescência: uma rajada de chamadas (carga inicial de buckets, child_changed em
+   sequência, re-entrância via _carregarJanela) vira um único render por frame.
+   Maior ganho de performance da Fase 1. */
+let _renderAllPending=false;
+function renderAll(){
+  if(_renderAllPending) return;
+  _renderAllPending=true;
+  const run=()=>{ _renderAllPending=false; try{ _renderAllNow(); }catch(e){ console.warn("[render] renderAll:",e); } };
+  if(typeof requestAnimationFrame==="function") requestAnimationFrame(run);
+  else setTimeout(run,16);
+}
 
 /* ===================== ROTEADOR DE TELAS (Fase 1) =====================
    Home (Visão geral) é o landing; a Grade passa a ser uma tela/ação.
