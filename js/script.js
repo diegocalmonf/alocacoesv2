@@ -4940,7 +4940,7 @@ function contarSlots(nome,dias,fer){
       if(r.feriado){feriadoAuto++; aus++; return;}
       const c=categoria(r);
       if(c==="c-livre")livre++;
-      else if(c==="c-proj"){proj++; projs[r.cliente]=(projs[r.cliente]||0)+1; _bumpT(r.cliente,"implantacao");}
+      else if(c==="c-proj"){proj++; if(r.cliente&&r.cliente!=="Livre"){projs[r.cliente]=(projs[r.cliente]||0)+1; _bumpT(r.cliente,"implantacao");}}
       else if(c==="c-dsc"){dsc++; if(r.cliente&&r.cliente!=="Livre"){projs[r.cliente]=(projs[r.cliente]||0)+1; _bumpT(r.cliente,"discovery");}}
       else if(c==="c-rot")rot++;
       else if(c==="c-int")intn++;
