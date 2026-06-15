@@ -2452,8 +2452,12 @@ function _torreAdRows(){
     const temP=_temConteudo(prev), temR=_temConteudo(real);
     if(!temP && !temR) return;
     if(foraDoEscopoAtual(prev) || foraDoEscopoAtual(real)) return;
-    const projetoRef=(temP&&prev.cliente)|| (temR&&real.cliente) || "";
-    if(projetoRef && projetoRef!=="Livre" && !_torreIsProjetoNome(projetoRef)) return;
+    // projetoRef = projeto REAL referenciado (ignora "Livre" = atividade sem projeto atribuído).
+    const projetoRef = (temP && prev.cliente && prev.cliente!=="Livre") ? prev.cliente
+                     : (temR && real.cliente && real.cliente!=="Livre") ? real.cliente : "";
+    // Só projetos operacionais reais entram na aderência. "Livre"/sem projeto NÃO é computado
+    // (mesma regra dos slots livres: previsto×realizado é métrica de projeto).
+    if(!_torreIsProjetoNome(projetoRef)) return;
     let st=statusCelula(c,iso,slot);
     if(st==="previsto"){
       if(iso>=hoje) st="planejadoFuturo";
