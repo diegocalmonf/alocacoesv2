@@ -2844,6 +2844,30 @@ function openAta(nome, iso, slot){
 }
 function closeAta(){ const o=el("ataOverlay"); if(o)o.classList.remove("open"); _ataCtx=null; }
 
+function _participantesRowsHTML(arr, podeEditar){
+  const dis=podeEditar?"":"disabled";
+  if(!arr||!arr.length) return `<div class="hint" style="padding:6px 8px">Nenhum participante.${podeEditar?' Use “Adicionar participante”.':''}</div>`;
+  return arr.map((p,i)=>`<div class="ptc-row" data-idx="${i}">
+    <input type="text" class="ptc-nome" value="${enc(p.nome||'')}" placeholder="Nome" ${dis}>
+    <input type="text" class="ptc-cargo" value="${enc(p.cargo||'')}" placeholder="Cargo" ${dis}>
+    <input type="text" class="ptc-empresa" value="${enc(p.empresa||'')}" placeholder="Empresa" ${dis}>
+    ${podeEditar?`<button class="btn ptc-del" type="button" data-idx="${i}" title="Remover participante"><i data-lucide="trash-2"></i></button>`:`<span></span>`}
+  </div>`).join("");
+}
+// Lê as linhas na ORDEM do DOM, SEM filtrar vazias (alinha índices durante a edição).
+function _lerParticipantesDOM(){
+  const host=el("ataParticipantes"); if(!host)return [];
+  return [...host.querySelectorAll(".ptc-row")].map(r=>{
+    const g=s=>{const e=r.querySelector(s);return e?e.value.trim():"";};
+    return {nome:g(".ptc-nome"),cargo:g(".ptc-cargo"),empresa:g(".ptc-empresa")};
+  });
+}
+function _renderAtaParticipantes(){
+  const host=el("ataParticipantes"); if(!host||!_ataCtx)return;
+  host.innerHTML=_participantesRowsHTML(_ataCtx.participantes||[], !!_ataCtx.podeEditar);
+  lucideRefresh();
+}
+
 function _renderAtaForm(nome, iso, slot, ata){
   const r=DATA[key(nome,iso,slot)]||null;
   const cliente=(r&&r.cliente&&r.cliente!=="Livre")?r.cliente:((ata&&ata.cliente)||"");
@@ -2857,7 +2881,9 @@ function _renderAtaForm(nome, iso, slot, ata){
   const dataFmt=DOW[d.getDay()]+", "+fmtDM(d)+"/"+d.getFullYear();
   const podeEditar=canEditAction("atas") && !impressa;
 
-  _ataCtx={nome,iso,slot,cliente,atividade,gp,lider,horario,ata:ata||null,mes:_mesDe(iso)};
+  _ataCtx={nome,iso,slot,cliente,atividade,gp,lider,horario,ata:ata||null,mes:_mesDe(iso),
+    participantes:(ata&&Array.isArray(ata.participantes))?ata.participantes.map(p=>({nome:p.nome||"",cargo:p.cargo||"",empresa:p.empresa||""})):[],
+    podeEditar};
 
   el("ataTitle").innerHTML=`<i data-lucide="file-signature"></i>ATA · ${enc(cliente||atividade||"slot")}`;
   el("ataSub").textContent=`${nome} · ${dataFmt} · ${slot} · ${horario}`;
@@ -2917,6 +2943,11 @@ function _renderAtaForm(nome, iso, slot, ata){
       <div class="ata-f"><span>Gerente de Projeto</span><b>${gp?enc(gp):"— (não definido)"}</b></div>
       <div class="ata-f"><span>Líder de Projeto</span><b>${lider?enc(lider):"— (não definido)"}</b></div>
     </div>
+    <div class="ata-sec"><label class="ata-lbl">Participantes <span class="lbl-soft">· nome, cargo, empresa</span></label>
+      <div class="ptc-head"><div>Participante</div><div>Cargo</div><div>Empresa</div><div></div></div>
+      <div id="ataParticipantes">${_participantesRowsHTML(_ataCtx.participantes, podeEditar)}</div>
+      ${podeEditar?`<button class="btn small" id="ataAddParticipante" type="button"><i data-lucide="user-plus"></i>Adicionar participante</button>`:""}
+    </div>
     <div class="ata-sec"><label class="ata-lbl">Tarefas Executadas</label>
       <textarea id="ataTarefas" rows="4" placeholder="Descreva as tarefas executadas no atendimento..." ${ro}>${val("tarefasExecutadas")}</textarea></div>
     <div class="ata-sec"><label class="ata-lbl">Pendências Apresentadas</label>
@@ -2928,6 +2959,8 @@ function _renderAtaForm(nome, iso, slot, ata){
 
   const btnSalvar=el("ataSalvar");
   if(btnSalvar) btnSalvar.style.display=podeEditar?"":"none";
+  { const ap=el("ataAddParticipante"); if(ap) ap.addEventListener("click",()=>{ _ataCtx.participantes=_lerParticipantesDOM(); _ataCtx.participantes.push({nome:"",cargo:"",empresa:""}); _renderAtaParticipantes(); }); }
+  { const host=el("ataParticipantes"); if(host) host.addEventListener("click",e=>{ const del=e.target.closest&&e.target.closest(".ptc-del"); if(!del)return; _ataCtx.participantes=_lerParticipantesDOM(); const i=+del.dataset.idx; if(i>=0&&i<_ataCtx.participantes.length){ _ataCtx.participantes.splice(i,1); _renderAtaParticipantes(); } }); }
   { const bc=el("ataConfirmarEnvio"); if(bc) bc.addEventListener("click", confirmarEnvioAta); }
   { const br=el("ataReenvio"); if(br) br.addEventListener("click", ()=>{ const p=el("ataEnvioPanel"); if(p)p.style.display=""; br.style.display="none"; lucideRefresh(); }); }
   const btnImprimir=el("ataImprimir");
@@ -2961,6 +2994,7 @@ function _montarAtaDoForm(ctx, existente, overrides){
     id, slotKey,
     cliente:ctx.cliente||"", atividade:ctx.atividade||"", data:ctx.iso, slot:ctx.slot, horario:ctx.horario||"",
     analista:ctx.nome, gp:ctx.gp||"", lider:ctx.lider||"",
+    participantes:_lerParticipantesDOM().filter(p=>p.nome||p.cargo||p.empresa),
     tarefasExecutadas:(el("ataTarefas")?el("ataTarefas").value:"").trim(),
     pendenciasApresentadas:(el("ataPendencias")?el("ataPendencias").value:"").trim(),
     observacoes:(el("ataObs")?el("ataObs").value:"").trim(),
@@ -3035,6 +3069,9 @@ function _ataPrintHTML(a){
   const printedFmt=a.printedAt?(String(a.printedAt).replace("T"," ").slice(0,16)):"";
   const sentFmt=a.envioConfirmado&&a.sentAt?(String(a.sentAt).replace("T"," ").slice(0,16)):"";
   const sentLinha=sentFmt?`<div class="apr-foot">Envio confirmado por ${enc(a.sentBy||"—")} em ${enc(sentFmt)}${(a.emailsConfirmados&&a.emailsConfirmados.length)?` · para: ${enc(a.emailsConfirmados.join(" · "))}`:""}</div>`:"";
+  const parts=(a.participantes&&a.participantes.length)
+    ? `<table class="apr-ptc"><thead><tr><th>Participante</th><th>Cargo</th><th>Empresa</th></tr></thead><tbody>${a.participantes.map(p=>`<tr><td>${enc(p.nome||"—")}</td><td>${enc(p.cargo||"—")}</td><td>${enc(p.empresa||"—")}</td></tr>`).join("")}</tbody></table>`
+    : `<div class="apr-v">—</div>`;
   return `
   <div class="apr-doc">
     <div class="apr-head">
@@ -3049,8 +3086,9 @@ function _ataPrintHTML(a){
       ${campo("Analista", a.analista)}
       ${campo("Gerente de Projeto", a.gp)}
       ${campo("Líder de Projeto", a.lider)}
-      ${campo("Status", "Impressa")}
+      ${campo("Status", a.envioConfirmado?"Enviada":"Impressa")}
     </div>
+    <div class="apr-ptc-sec"><div class="apr-l">Participantes</div>${parts}</div>
     <div class="apr-block">
       ${campo("Tarefas Executadas", a.tarefasExecutadas, true)}
       ${campo("Pendências Apresentadas", a.pendenciasApresentadas, true)}
