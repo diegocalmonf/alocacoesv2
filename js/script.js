@@ -151,6 +151,7 @@ const firebaseConfig = JSON.parse(localStorage.getItem(CFG_KEY) || "null") || DE
 const DB_PATH        = "alocacoes/state";   // { reg, alloc:[...] }
 const USERS_PATH     = "alocacoes/users";   // /{uid} = {email, role, linkedAnalyst, linkedLider, createdAt}
 const AUDIT_PATH     = "alocacoes/audit";   // trilha de auditoria (push de eventos)
+const ATAS_PATH      = "alocacoes/atas";    // /<YYYY-MM>/<idAta> = {ata} (windowed)
 /* =========================================================================
    AUTH_ENABLED — LIGA/DESLIGA do login (use false durante desenvolvimento local)
    - false: app abre direto, sem tela de login, com perfil "admin" embutido.
@@ -217,6 +218,7 @@ const ACTIONS = [
   {id:"torre",      label:"Torre de controle",    icon:"radar",             desc:"Painéis de Esteira + Discovery", readOnly:true},
   {id:"relatorios", label:"Relatórios",           icon:"file-bar-chart-2",  desc:"Alocação, squads, go-lives, mapa", readOnly:true},
   {id:"kpis",       label:"KPIs",                 icon:"line-chart",        desc:"Indicadores executivos", readOnly:true},
+  {id:"atas",       label:"Atas",                 icon:"file-signature",    desc:"Geração e controle das atas dos slots"},
   {id:"cadastros",  label:"Ações & Cadastros",    icon:"settings-2",        desc:"Analistas, projetos, atividades, rituais"},
 ];
 const ACTION_BY_ID = Object.fromEntries(ACTIONS.map(a=>[a.id,a]));
@@ -236,6 +238,7 @@ const ACTION_DEFAULTS = {
   torre:      {admin:"read", gestor:"read", lider:"read", gp:"read", analista:"read", leitura:"read"},
   relatorios: {admin:"read", gestor:"read", lider:"read", gp:"read", analista:"read", leitura:"read"},
   kpis:       {admin:"read", gestor:"read", lider:"read", gp:"read", analista:"read", leitura:"read"},
+  atas:       {admin:"edit", gestor:"edit", lider:"edit", gp:"read", analista:"read", leitura:"read"},
   cadastros:  {admin:"edit", gestor:"none", lider:"none", gp:"none", analista:"none", leitura:"none"},
 };
 function _normLevel(v){ return (v==="none"||v==="read"||v==="edit") ? v : null; }
@@ -1520,6 +1523,7 @@ function renameAnalista(old,nv){
   REG.projetos.forEach(p=>{p.analistas=(p.analistas||[]).map(x=>x===old?nv:x);});
   Object.keys(DATA).forEach(k=>{if(k.startsWith(old+"__")){DATA[nv+k.slice(old.length)]=DATA[k];delete DATA[k];}});
   if(consultor===old)consultor=nv;
+  try{ _renomearAtasDoAnalista(old,nv); }catch(e){ console.warn("[atas] rename:",e); }
 }
 function renameLider(old,nv){
   if(old===nv)return;
@@ -1536,6 +1540,55 @@ function renameGp(old,nv){
   if(old===nv)return;
   REG.gps=(REG.gps||[]).map(x=>x===old?nv:x);
   REG.projetos.forEach(p=>{if(p.gp===old)p.gp=nv;});
+}
+
+/* ===================== Atas · infra de dados (Fase 2) =====================
+   Persistência windowed: alocacoes/atas/<YYYY-MM>/<idAta>.
+   - idAta opaco; o vínculo com o slot é o campo slotKey (analista__iso__slot).
+   - Lookup por slot: lê o bucket do mês e indexa por slotKey (cache em memória).
+   - "Livre = ausência de dado": ata é nó próprio; NUNCA grava nada no slot.
+   - O slotKey embute o nome do analista (igual às chaves de DATA); rename de
+     analista é propagado às atas já gravadas por _renomearAtasDoAnalista().      */
+let _atasCache = {};   // slotKey -> ata (+ _id,_mes) já lidos da nuvem
+let _atasMeses = {};   // "YYYY-MM" -> true (bucket já carregado nesta sessão)
+
+function _ataNovoId(){ return "ATA_"+Date.now().toString(36)+"_"+Math.random().toString(36).slice(2,7); }
+
+function _carregarAtasMes(mes){
+  if(!_db) return Promise.resolve({});
+  return _db.ref(ATAS_PATH+"/"+mes).once("value").then(s=>{
+    const v=s.val()||{};
+    Object.keys(v).forEach(id=>{ const a=v[id]; if(a&&a.slotKey) _atasCache[a.slotKey]=Object.assign({_id:id,_mes:mes},a); });
+    _atasMeses[mes]=true;
+    return v;
+  }).catch(e=>{ console.warn("[atas] leitura falhou (verifique as Regras do Firebase para "+ATAS_PATH+"):",e); return {}; });
+}
+function _ataDoSlot(slotKey){ return _atasCache[slotKey]||null; }
+
+// Propaga rename de analista nas atas já gravadas. Assíncrono, cloud-only,
+// fire-and-forget — nunca bloqueia/qubra o rename em memória.
+function _renomearAtasDoAnalista(old,nv){
+  if(!_db || old===nv) return;
+  _db.ref(ATAS_PATH).once("value").then(s=>{
+    const all=s.val(); if(!all) return;
+    const updates={};
+    Object.keys(all).forEach(mes=>{
+      const bucket=all[mes]||{};
+      Object.keys(bucket).forEach(id=>{
+        const a=bucket[id]; if(!a) return;
+        if(a.slotKey && a.slotKey.indexOf(old+"__")===0){
+          a.slotKey = nv + a.slotKey.slice(old.length);
+          if(a.analista===old) a.analista=nv;
+          updates[mes+"/"+id]=a;
+        }
+      });
+    });
+    if(Object.keys(updates).length){
+      _db.ref(ATAS_PATH).update(sanitizeForFirebase(updates))
+        .then(()=>{ _atasCache={}; _atasMeses={}; })   // invalida cache p/ releitura
+        .catch(e=>console.warn("[atas] propagação de rename falhou:",e));
+    }
+  }).catch(()=>{});
 }
 
 /* ===================== render grade ===================== */
@@ -2003,7 +2056,7 @@ function setActiveNav(t){
 }
 /* Telas-página são mutuamente exclusivas: abrir uma fecha as outras (uma por vez). */
 function _fecharOutrasTelas(exceto){
-  ["esteiraOverlay","discoveryOverlay","repOverlay","kpiOverlay","actOverlay"].forEach(function(id){
+  ["esteiraOverlay","discoveryOverlay","repOverlay","kpiOverlay","actOverlay","atasOverlay"].forEach(function(id){
     if(id!==exceto){ try{ var o=el(id); if(o) o.classList.remove("open"); }catch(e){} }
   });
 }
@@ -2638,6 +2691,7 @@ function renderHome(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
     {action:"discovery",  act:"irPara('discovery')",        ic:"search",           t:"Linha do tempo · Discovery", d:"Tabela e edição dos ritos",                m:"abrir"},
     {action:"relatorios", act:"el('reportsBtn').click()",   ic:"file-bar-chart-2", t:"Relatórios",                 d:"Alocação, squads, go-lives, mapa",         m:"abrir"},
     {action:"kpis",       act:"el('kpisBtn').click()",      ic:"line-chart",       t:"KPIs",                       d:"Indicadores executivos",                   m:"abrir"},
+    {action:"atas",       act:"openAtasReport()",           ic:"file-signature",   t:"Atas",                       d:"Controle e indicadores das atas",          m:"abrir"},
     {action:"cadastros",  act:"el('acoesBtn').click()",     ic:"settings-2",       t:"Ações & cadastros",          d:"Analistas, projetos, usuários, rituais",   m:"abrir"},
     {action:"nsforma", always:true, act:"window.open('https://capacitacaonstech.vercel.app','_blank','noopener')", ic:"graduation-cap", t:"NS Forma",         d:"Plataforma de capacitação NSTECH",         m:"abrir"},
   ].filter(c=>c.always || canViewAction(c.action));
@@ -2724,6 +2778,28 @@ function openAlloc(nomeOuIso,isoOuSlot,slotOuUndef){
   // Devolve o slot para "Livre" removendo o registro (apagar a chave = ausência = livre).
   el("mLiberar").style.display = (podeAlterar && r) ? "" : "none";
   el("mLiberar").onclick = ()=>liberarSlot(nome, iso, slot);
+  // ── Botão ATA (Fase 2): aparece quando a atividade exige ata OU já existe ata p/ o slot ──
+  const ataBtn=el("mAta");
+  if(ataBtn){
+    const podeVer=canViewAction("atas");
+    const atvAta=r?atividadeObj(r.atividade):null;
+    const exigeAta=!!(atvAta&&atvAta.exigeAta);
+    if(r && podeVer && exigeAta){ ataBtn.style.display=""; ataBtn.innerHTML='<i data-lucide="file-signature"></i>Gerar ATA'; }
+    else { ataBtn.style.display="none"; }
+    ataBtn.onclick=()=>{ closeAlloc(); openAta(nome, iso, slot); };
+    if(r && podeVer){                                  // refina de forma assíncrona se já existe ata
+      const mes=_mesDe(iso), kk=key(nome,iso,slot);
+      const done=_atasMeses[mes]?Promise.resolve():_carregarAtasMes(mes).then(()=>{});
+      done.then(()=>{
+        if(!el("overlay").classList.contains("open")) return;  // modal já foi fechado
+        const ex=_ataDoSlot(kk);
+        if(ex){ ataBtn.style.display=""; ataBtn.innerHTML='<i data-lucide="file-text"></i>Visualizar ATA'; }
+        else if(exigeAta){ ataBtn.style.display=""; ataBtn.innerHTML='<i data-lucide="file-signature"></i>Gerar ATA'; }
+        else { ataBtn.style.display="none"; }
+        lucideRefresh();
+      });
+    }
+  }
   el("overlay").classList.add("open");
   lucideRefresh();
 }
@@ -2746,6 +2822,434 @@ function liberarSlot(nome, iso, slot){
   delete DATA[k];
   audit("allocation.delete", k, antigo, null, {note:"Slot liberado (atividade cancelada) — voltou a Livre"});
   saveAlloc(); renderAll(); closeAlloc();
+}
+
+/* ===================== Atas · tela de geração/consulta (Fase 2) =====================
+   - Abre por slot (botão "Gerar/Visualizar ATA" no modal de consulta).
+   - Autopreenche cliente/data/slot/atividade/analista; gp/líder vêm AO VIVO do
+     cadastro do projeto enquanto a ata não está impressa (na impressão, Fase 3,
+     congelam). Campos digitáveis: tarefas, pendências, observações, e-mails.
+   - Ata impressa abre em MODO CONSULTA (read-only) — sempre acessível.            */
+let _ataCtx=null;   // {nome,iso,slot,cliente,atividade,gp,lider,horario,ata,mes}
+
+function openAta(nome, iso, slot){
+  if(!canViewAction("atas")){ alert("Você não tem acesso às Atas."); return; }
+  const mes=_mesDe(iso);
+  const pronto=_atasMeses[mes]?Promise.resolve():_carregarAtasMes(mes).then(()=>{});
+  pronto.then(()=>{
+    _renderAtaForm(nome, iso, slot, _ataDoSlot(key(nome,iso,slot)));
+    const o=el("ataOverlay"); if(o)o.classList.add("open");
+    lucideRefresh();
+  });
+}
+function closeAta(){ const o=el("ataOverlay"); if(o)o.classList.remove("open"); _ataCtx=null; }
+
+function _renderAtaForm(nome, iso, slot, ata){
+  const r=DATA[key(nome,iso,slot)]||null;
+  const cliente=(r&&r.cliente&&r.cliente!=="Livre")?r.cliente:((ata&&ata.cliente)||"");
+  const atividade=(r&&r.atividade)||(ata&&ata.atividade)||"";
+  const projCad=cliente?REG.projetos.find(x=>x.nome===cliente):null;
+  const impressa=!!(ata&&ata.impressa);
+  const gp = impressa ? (ata.gp||"") : (projCad&&projCad.gp||"");        // congelado se impressa; senão ao vivo
+  const lider = impressa ? (ata.lider||"") : (projCad&&projCad.lider||"");
+  const horario=((SLOTS.find(s=>s.id===slot)||{}).time)||"";
+  const d=parseISO(iso);
+  const dataFmt=DOW[d.getDay()]+", "+fmtDM(d)+"/"+d.getFullYear();
+  const podeEditar=canEditAction("atas") && !impressa;
+
+  _ataCtx={nome,iso,slot,cliente,atividade,gp,lider,horario,ata:ata||null,mes:_mesDe(iso)};
+
+  el("ataTitle").innerHTML=`<i data-lucide="file-signature"></i>ATA · ${enc(cliente||atividade||"slot")}`;
+  el("ataSub").textContent=`${nome} · ${dataFmt} · ${slot} · ${horario}`;
+
+  const contatos=(projCad&&Array.isArray(projCad.contatosCliente))?projCad.contatosCliente.filter(c=>c.ativo!==false&&c.email):[];
+  const jaSug=(ata&&Array.isArray(ata.emailsSugeridos))?ata.emailsSugeridos:null;
+  const tipoLabel={principal:"Principal",copia:"Cópia",opcional:"Opcional"};
+  const emailRows=contatos.length
+    ? contatos.map(c=>{
+        const checked=jaSug?jaSug.includes(c.email):(c.tipo==="principal"||c.tipo==="copia");
+        return `<label class="ata-mail ${podeEditar?"":"ro"}"><input type="checkbox" class="ata-mail-chk" data-email="${enc(c.email)}" ${checked?"checked":""} ${podeEditar?"":"disabled"}> <b>${enc(c.nome||c.email)}</b> <span class="ata-mail-meta">${enc(c.email)}${c.tipo?` · ${tipoLabel[c.tipo]||c.tipo}`:""}</span></label>`;
+      }).join("")
+    : `<div class="hint" style="padding:8px">Nenhum contato ativo no projeto. Cadastre na aba <b>Contato Cliente</b> do projeto para sugerir destinatários.</div>`;
+
+  const ro=podeEditar?"":"readonly";
+  const val=s=>enc((ata&&ata[s])||"");
+  const banner = impressa
+    ? `<div class="ata-banner lock"><i data-lucide="lock"></i> Ata <b>impressa</b> em ${enc((ata.printedAt||"").replace("T"," ").slice(0,16))}${ata.printedBy?` por ${enc(ata.printedBy)}`:""} — bloqueada para edição, disponível para consulta.</div>`
+    : (ata?`<div class="ata-banner ok"><i data-lucide="check"></i> Ata gerada em ${enc((ata.createdAt||"").replace("T"," ").slice(0,16))}${ata.createdBy?` por ${enc(ata.createdBy)}`:""} · alterável enquanto não for impressa.</div>`:"");
+
+  // ── Controle de envio (Fase 4): só após impressão. Confirmar envio é uma transição
+  //    PERMITIDA em ata impressa (o bloqueio trava o conteúdo, não o registro de envio).
+  const enviado=!!(ata&&ata.envioConfirmado);
+  const podeConfirmar=canEditAction("atas");
+  const sugeridos=(ata&&Array.isArray(ata.emailsSugeridos))?ata.emailsSugeridos:[];
+  const confirmados=(ata&&Array.isArray(ata.emailsConfirmados))?ata.emailsConfirmados:[];
+  const envioChecks = sugeridos.length
+    ? sugeridos.map(e=>{ const ck=enviado?confirmados.includes(e):true;
+        return `<label class="ata-mail"><input type="checkbox" class="ata-envio-chk" data-email="${enc(e)}" ${ck?"checked":""}> <span class="ata-mail-meta">${enc(e)}</span></label>`; }).join("")
+    : `<div class="hint" style="padding:6px 8px">Sem e-mails sugeridos. Informe um destinatário abaixo ou confirme o envio sem registrar e-mails.</div>`;
+  const sentBanner = enviado
+    ? `<div class="ata-banner sent"><i data-lucide="mail-check"></i> Envio confirmado em ${enc((ata.sentAt||"").replace("T"," ").slice(0,16))}${ata.sentBy?` por ${enc(ata.sentBy)}`:""}${confirmados.length?` · para: ${enc(confirmados.join(" · "))}`:""}.</div>`
+    : "";
+  const envioSec = impressa ? `
+    <div class="ata-sec ata-envio">
+      <label class="ata-lbl">Controle de envio</label>
+      ${sentBanner}
+      ${podeConfirmar ? `
+        ${enviado?`<button class="btn small" id="ataReenvio" type="button"><i data-lucide="pencil"></i>Atualizar envio</button>`:""}
+        <div id="ataEnvioPanel" ${enviado?'style="display:none"':""}>
+          <div class="hint" style="margin:6px 0 8px">Marque os destinatários para os quais a ata foi <b>efetivamente enviada</b> e confirme. Não há disparo automático de e-mail.</div>
+          <div class="ata-mails" id="ataEnvioMails">${envioChecks}</div>
+          <div class="ata-envio-extra"><input type="email" id="ataEnvioExtra" placeholder="Adicionar outro e-mail (opcional)"></div>
+          <button class="btn primary" id="ataConfirmarEnvio" type="button"><i data-lucide="send"></i>${enviado?"Atualizar envio":"Confirmar envio"}</button>
+        </div>`
+      : (enviado ? "" : `<div class="hint" style="padding:6px 8px">Envio ainda não confirmado.</div>`)}
+    </div>` : "";
+
+  el("ataBody").innerHTML=`
+    ${banner}
+    <div class="ata-auto">
+      <div class="ata-f"><span>Cliente / Projeto</span><b>${enc(cliente||"—")}</b></div>
+      <div class="ata-f"><span>Atividade</span><b>${enc(atividade||"—")}</b></div>
+      <div class="ata-f"><span>Data</span><b>${dataFmt}</b></div>
+      <div class="ata-f"><span>Slot / Horário</span><b>${enc(slot)} · ${enc(horario||"—")}</b></div>
+      <div class="ata-f"><span>Analista</span><b>${enc(nome)}</b></div>
+      <div class="ata-f"><span>Gerente de Projeto</span><b>${gp?enc(gp):"— (não definido)"}</b></div>
+      <div class="ata-f"><span>Líder de Projeto</span><b>${lider?enc(lider):"— (não definido)"}</b></div>
+    </div>
+    <div class="ata-sec"><label class="ata-lbl">Tarefas Executadas</label>
+      <textarea id="ataTarefas" rows="4" placeholder="Descreva as tarefas executadas no atendimento..." ${ro}>${val("tarefasExecutadas")}</textarea></div>
+    <div class="ata-sec"><label class="ata-lbl">Pendências Apresentadas</label>
+      <textarea id="ataPendencias" rows="4" placeholder="Pendências levantadas pelo cliente..." ${ro}>${val("pendenciasApresentadas")}</textarea></div>
+    <div class="ata-sec"><label class="ata-lbl">Observações adicionais <span class="lbl-soft">· opcional</span></label>
+      <textarea id="ataObs" rows="3" placeholder="Observações..." ${ro}>${val("observacoes")}</textarea></div>
+    <div class="ata-sec"><label class="ata-lbl">E-mails sugeridos para envio <span class="lbl-soft">· sugestão, sem disparo automático</span></label>
+      <div class="ata-mails" id="ataMails">${emailRows}</div></div>${envioSec}`;
+
+  const btnSalvar=el("ataSalvar");
+  if(btnSalvar) btnSalvar.style.display=podeEditar?"":"none";
+  { const bc=el("ataConfirmarEnvio"); if(bc) bc.addEventListener("click", confirmarEnvioAta); }
+  { const br=el("ataReenvio"); if(br) br.addEventListener("click", ()=>{ const p=el("ataEnvioPanel"); if(p)p.style.display=""; br.style.display="none"; lucideRefresh(); }); }
+  const btnImprimir=el("ataImprimir");
+  if(btnImprimir){
+    if(impressa){                              // já impressa → 2ª via p/ quem visualiza
+      const podeVer=canViewAction("atas");
+      btnImprimir.style.display=podeVer?"":"none";
+      btnImprimir.innerHTML='<i data-lucide="printer"></i>Imprimir 2ª via';
+    } else if(canEditAction("atas") && ata){   // gerada e não impressa → imprimir e bloquear (precisa já existir)
+      btnImprimir.style.display="";
+      btnImprimir.innerHTML='<i data-lucide="printer"></i>Imprimir e bloquear';
+    } else {                                   // ainda não salva (salve antes) ou sem permissão
+      btnImprimir.style.display="none";
+    }
+  }
+}
+
+// Choke-point de gravação da ata. Blindagem de permissão + bloqueio pós-impressão
+// na CAMADA DE GRAVAÇÃO (não só na UI).
+// Monta o objeto da ata a partir do form atual (+ overrides). NÃO grava nem bloqueia.
+// 'overrides' permite setar impressa/printedAt/printedBy no caminho de impressão.
+function _montarAtaDoForm(ctx, existente, overrides){
+  const agora=new Date().toISOString();
+  const userTag=(_currentUser&&_currentUser.email)||"local";
+  const slotKey=key(ctx.nome,ctx.iso,ctx.slot);
+  const id=(existente&&existente._id)||_ataNovoId();
+  const emails=[...document.querySelectorAll("#ataMails .ata-mail-chk:checked")].map(c=>c.dataset.email).filter(Boolean);
+  const base = existente ? Object.assign({},existente) : {};
+  delete base._id; delete base._mes;   // campos internos não vão pro Firebase
+  const ata=Object.assign({}, base, {
+    id, slotKey,
+    cliente:ctx.cliente||"", atividade:ctx.atividade||"", data:ctx.iso, slot:ctx.slot, horario:ctx.horario||"",
+    analista:ctx.nome, gp:ctx.gp||"", lider:ctx.lider||"",
+    tarefasExecutadas:(el("ataTarefas")?el("ataTarefas").value:"").trim(),
+    pendenciasApresentadas:(el("ataPendencias")?el("ataPendencias").value:"").trim(),
+    observacoes:(el("ataObs")?el("ataObs").value:"").trim(),
+    emailsSugeridos:emails,
+    emailsConfirmados:(existente&&existente.emailsConfirmados)||[],
+    impressa:!!(existente&&existente.impressa),
+    envioConfirmado:!!(existente&&existente.envioConfirmado),
+    createdAt:(existente&&existente.createdAt)||agora,
+    createdBy:(existente&&existente.createdBy)||userTag,
+    updatedAt:agora, updatedBy:userTag,
+    printedAt:(existente&&existente.printedAt)||"",
+    printedBy:(existente&&existente.printedBy)||""
+  }, overrides||{});
+  // status derivado ("pendente" é virtual = ausência de registro)
+  ata.status = ata.impressa ? (ata.envioConfirmado?"enviada":"impressa") : "gerada";
+  return {ata, id, slotKey};
+}
+// Grava a ata (Firebase ou modo local) + atualiza cache + auditoria.
+function _gravarAta(ata, id, slotKey, mes, existente, auditKind, onOk){
+  const antesAudit = existente ? (function(){const c=Object.assign({},existente);delete c._id;delete c._mes;return c;})() : null;
+  const aplicarLocal=()=>{ _atasCache[slotKey]=Object.assign({_id:id,_mes:mes},ata); audit(auditKind, id, antesAudit, ata); };
+  if(!_db){ aplicarLocal(); if(onOk)onOk(); return; }
+  _db.ref(ATAS_PATH+"/"+mes+"/"+id).set(sanitizeForFirebase(ata))
+    .then(()=>{ aplicarLocal(); if(onOk)onOk(); })
+    .catch(e=>{ console.warn("[atas] gravação falhou (Regras do Firebase para "+ATAS_PATH+"?):",e); alert("Não foi possível salvar a ata. Verifique as permissões / Regras do Firebase para "+ATAS_PATH+"."); });
+}
+
+function salvarAta(){
+  if(!canEditAction("atas")){ alert("Você está em modo somente leitura em Atas — geração e edição indisponíveis."); return; }
+  const ctx=_ataCtx; if(!ctx) return;
+  const existente=ctx.ata;
+  if(existente && existente.impressa){ alert("Esta ata já foi impressa e está bloqueada para edição. Ela permanece disponível para consulta."); return; }
+  const {ata,id,slotKey}=_montarAtaDoForm(ctx, existente, null);
+  _gravarAta(ata, id, slotKey, ctx.mes, existente, "ata."+(existente?"update":"create"), ()=>{ if(!_db)alert("ATA salva (modo local — sem nuvem configurada)."); closeAta(); });
+}
+
+/* ===================== Atas · impressão e bloqueio (Fase 3) =====================
+   Imprimir é a ação que BLOQUEIA a ata (regra: após impressão não pode mais ser
+   alterada — mas continua consultável). Congela GP/líder no objeto, seta
+   impressa/printedAt/printedBy, audita "ata.print" e dispara o layout imprimível.
+   2ª via de ata já impressa: só re-renderiza/imprime, sem alterar estado.        */
+function imprimirAta(){
+  const ctx=_ataCtx; if(!ctx) return;
+  const existente=ctx.ata;
+  const jaImpressa=!!(existente && existente.impressa);
+
+  if(jaImpressa){
+    // 2ª via — quem pode visualizar pode reimprimir; não altera nada.
+    if(!canViewAction("atas")){ alert("Você não tem acesso às Atas."); return; }
+    _dispararImpressao(existente);
+    return;
+  }
+  // Caminho de bloqueio: exige edição + confirmação (ação irreversível).
+  if(!canEditAction("atas")){ alert("Você está em modo somente leitura em Atas — não é possível imprimir/bloquear."); return; }
+  if(!confirm("Imprimir BLOQUEIA a ata para edição (ela continuará disponível para consulta e 2ª via). Deseja imprimir e bloquear?")) return;
+
+  const agora=new Date().toISOString();
+  const userTag=(_currentUser&&_currentUser.email)||"local";
+  const {ata,id,slotKey}=_montarAtaDoForm(ctx, existente, {impressa:true, printedAt:agora, printedBy:userTag});
+  _gravarAta(ata, id, slotKey, ctx.mes, existente, "ata.print", ()=>{
+    // re-renderiza o form já em modo consulta (impressa) e dispara a impressão
+    _renderAtaForm(ctx.nome, ctx.iso, ctx.slot, _atasCache[slotKey]);
+    lucideRefresh();
+    _dispararImpressao(_atasCache[slotKey]);
+  });
+}
+
+function _ataPrintHTML(a){
+  const d=parseISO(a.data); const dataFmt=DOW[d.getDay()]+", "+fmtDM(d)+"/"+d.getFullYear();
+  const linhasMail=(a.emailsSugeridos&&a.emailsSugeridos.length)?a.emailsSugeridos.map(enc).join(" · "):"—";
+  const campo=(label,val,multi)=>`<div class="apr-field${multi?" apr-multi":""}"><div class="apr-l">${label}</div><div class="apr-v">${val&&String(val).trim()?enc(val).replace(/\n/g,"<br>"):"—"}</div></div>`;
+  const printedFmt=a.printedAt?(String(a.printedAt).replace("T"," ").slice(0,16)):"";
+  const sentFmt=a.envioConfirmado&&a.sentAt?(String(a.sentAt).replace("T"," ").slice(0,16)):"";
+  const sentLinha=sentFmt?`<div class="apr-foot">Envio confirmado por ${enc(a.sentBy||"—")} em ${enc(sentFmt)}${(a.emailsConfirmados&&a.emailsConfirmados.length)?` · para: ${enc(a.emailsConfirmados.join(" · "))}`:""}</div>`:"";
+  return `
+  <div class="apr-doc">
+    <div class="apr-head">
+      <div class="apr-brand">NS&nbsp;ALOC</div>
+      <div class="apr-title">ATA DE ATENDIMENTO</div>
+    </div>
+    <div class="apr-grid">
+      ${campo("Cliente / Projeto", a.cliente)}
+      ${campo("Atividade", a.atividade)}
+      ${campo("Data", dataFmt)}
+      ${campo("Slot / Horário", (a.slot||"")+" · "+(a.horario||"—"))}
+      ${campo("Analista", a.analista)}
+      ${campo("Gerente de Projeto", a.gp)}
+      ${campo("Líder de Projeto", a.lider)}
+      ${campo("Status", "Impressa")}
+    </div>
+    <div class="apr-block">
+      ${campo("Tarefas Executadas", a.tarefasExecutadas, true)}
+      ${campo("Pendências Apresentadas", a.pendenciasApresentadas, true)}
+      ${campo("Observações", a.observacoes, true)}
+      ${campo("E-mails sugeridos para envio", linhasMail, true)}
+    </div>
+    <div class="apr-sign">
+      <div class="apr-sign-l"><div class="apr-line"></div>Analista — ${enc(a.analista||"")}</div>
+      <div class="apr-sign-l"><div class="apr-line"></div>Cliente</div>
+    </div>
+    <div class="apr-foot">
+      Gerada por ${enc(a.createdBy||"—")} em ${enc((a.createdAt||"").replace("T"," ").slice(0,16))}${printedFmt?` · Impressa por ${enc(a.printedBy||"—")} em ${enc(printedFmt)}`:""} · ID ${enc(a.id||"")}
+    </div>${sentLinha}
+  </div>`;
+}
+function _dispararImpressao(a){
+  const host=el("ataPrint"); if(!host){ window.print(); return; }
+  host.innerHTML=_ataPrintHTML(a);
+  // pequeno atraso garante o paint do conteúdo antes do diálogo de impressão
+  setTimeout(()=>{ try{ window.print(); }catch(e){ console.warn("[atas] print:",e); } }, 60);
+}
+
+/* ===================== Atas · controle de envio (Fase 4) =====================
+   Confirmar envio é uma transição PERMITIDA em ata impressa (o bloqueio pós-impressão
+   trava o conteúdo, não o registro de envio). Toca apenas os campos de envio:
+   emailsConfirmados, envioConfirmado, sentAt/sentBy → status "enviada". Audita "ata.send".
+   Re-confirmação atualiza a lista de destinatários (mantém o sentAt/sentBy originais).   */
+function confirmarEnvioAta(){
+  const ctx=_ataCtx; if(!ctx) return;
+  const existente=ctx.ata;
+  if(!canEditAction("atas")){ alert("Você não tem permissão para confirmar envio de atas."); return; }
+  if(!existente || !existente.impressa){ alert("Confirme o envio somente após imprimir a ata."); return; }
+
+  const checked=[...document.querySelectorAll("#ataEnvioMails .ata-envio-chk:checked")].map(c=>c.dataset.email);
+  const extraInput=el("ataEnvioExtra"); const extra=extraInput?extraInput.value.trim():"";
+  if(extra){ if(!/.+@.+\..+/.test(extra)){ alert("E-mail adicional inválido."); return; } if(!checked.includes(extra)) checked.push(extra); }
+  const emailsConf=[...new Set(checked)].filter(Boolean);
+  if(!emailsConf.length && !confirm("Nenhum e-mail marcado. Confirmar o envio mesmo assim (sem registrar destinatários)?")) return;
+
+  const agora=new Date().toISOString();
+  const userTag=(_currentUser&&_currentUser.email)||"local";
+  const base=Object.assign({},existente); delete base._id; delete base._mes;
+  const ata=Object.assign({}, base, {
+    emailsConfirmados:emailsConf,
+    envioConfirmado:true,
+    sentAt:existente.sentAt||agora,    // 1ª confirmação fixa o momento do envio
+    sentBy:existente.sentBy||userTag,
+    updatedAt:agora, updatedBy:userTag
+  });
+  ata.status = ata.impressa ? (ata.envioConfirmado?"enviada":"impressa") : "gerada";
+  _gravarAta(ata, existente._id, existente.slotKey, ctx.mes, existente, "ata.send", ()=>{
+    _renderAtaForm(ctx.nome, ctx.iso, ctx.slot, _atasCache[existente.slotKey]); lucideRefresh();
+  });
+}
+
+/* ===================== Atas · gestão executiva (Fase 5) =====================
+   Visão "Atas": KPIs, rankings de pendência (analista/cliente/GP) e tabela, com
+   filtro de período (buckets windowed) + escopo (cliente/analista/GP/status).
+   "Obrigatória" = slot do período cuja atividade tem exigeAta=true. "Pendente" é
+   virtual (obrigatória sem registro de ata). KPIs e rankings respeitam o filtro.   */
+let _atasLinhas=[];
+let _atasFiltro={cliente:"todos",analista:"todos",gp:"todos",status:"todos"};
+
+function openAtasReport(){
+  if(!canViewAction("atas")){ alert("Você não tem acesso às Atas."); return; }
+  _fecharOutrasTelas("atasOverlay");
+  const o=el("atasOverlay"); if(o)o.classList.add("open");
+  try{ aplicarDatasPadrao("atasDataInicio","atasDataFim"); }catch(e){}
+  _atasFiltro={cliente:"todos",analista:"todos",gp:"todos",status:"todos"};
+  aplicarPeriodoAtas();
+  lucideRefresh();
+}
+function closeAtasReport(){ const o=el("atasOverlay"); if(o)o.classList.remove("open"); }
+
+function _mesesAtas(ini,fim){
+  const set=[]; let a=new Date(ini+"T00:00:00"); const f=new Date(fim+"T00:00:00");
+  while(a<=f){ set.push(a.toISOString().slice(0,7)); a.setMonth(a.getMonth()+1); }
+  return set;
+}
+function _lerAtasPorPeriodo(ini,fim){
+  if(!_db){ return Promise.resolve(Object.keys(_atasCache).map(k=>_atasCache[k]).filter(a=>a&&a.data>=ini&&a.data<=fim)); }
+  const meses=_mesesAtas(ini,fim);
+  return Promise.all(meses.map(m=>_db.ref(ATAS_PATH+"/"+m).once("value").then(s=>s.val()||{}).catch(()=>({}))))
+    .then(buckets=>{
+      const out=[];
+      buckets.forEach(b=>Object.keys(b).forEach(id=>{ const a=b[id]; if(a&&a.data>=ini&&a.data<=fim){ out.push(Object.assign({_id:id},a)); if(a.slotKey)_atasCache[a.slotKey]=Object.assign({_id:id,_mes:String(a.data||"").slice(0,7)},a); } }));
+      return out;
+    });
+}
+function _lerAlocacoesAtas(ini,fim){
+  if(_db) return _lerBucketsPorPeriodo(ini,fim).then(b=>filtrarDadosPorDataExata(b,ini,fim));
+  return Promise.resolve(filtrarDadosPorDataExata(DATA,ini,fim));   // modo local: filtra DATA em memória
+}
+function aplicarPeriodoAtas(){
+  const ini=el("atasDataInicio")?el("atasDataInicio").value:"";
+  const fim=el("atasDataFim")?el("atasDataFim").value:"";
+  if(!ini||!fim){ alert("Selecione as datas de início e fim."); return; }
+  if(ini>fim){ alert("A data inicial não pode ser maior que a final."); return; }
+  const body=el("atasBody"); if(body) body.innerHTML=`<div class="rep-empty" style="padding:30px">Carregando atas do período…</div>`;
+  Promise.all([_lerAlocacoesAtas(ini,fim), _lerAtasPorPeriodo(ini,fim)]).then(function(res){
+    _atasLinhas=_montarLinhasAtas(res[0]||{}, res[1]||[]);
+    _popularFiltrosAtas();
+    renderAtasReport();
+    lucideRefresh();
+  }).catch(function(e){ console.warn("[atas] relatório:",e); if(body)body.innerHTML=`<div class="rep-empty" style="padding:30px">Falha ao carregar. Verifique as Regras do Firebase para ${ATAS_PATH}.</div>`; });
+}
+function _montarLinhasAtas(aloc, atas){
+  const ataPorSlot={}; atas.forEach(a=>{ if(a&&a.slotKey)ataPorSlot[a.slotKey]=a; });
+  const linhas=[]; const usados={};
+  Object.keys(aloc).forEach(k=>{
+    const r=aloc[k]; if(!r)return;
+    const atv=atividadeObj(r.atividade);
+    if(!(atv&&atv.exigeAta))return;                       // só slots que exigem ata
+    const p=k.split("__"); const analista=p[0], iso=p[1], slot=p[2];
+    const cliente=(r.cliente&&r.cliente!=="Livre")?r.cliente:"";
+    const proj=cliente?REG.projetos.find(x=>x.nome===cliente):null;
+    const gp=proj&&proj.gp?proj.gp:"";
+    const ata=ataPorSlot[k]||null;
+    const status=ata?(ata.envioConfirmado?"enviada":(ata.impressa?"impressa":"gerada")):"pendente";
+    linhas.push({slotKey:k, analista, iso, slot, atividade:r.atividade||"", cliente, gp, status, obrigatoria:true, ata});
+    usados[k]=true;
+  });
+  atas.forEach(a=>{                                       // atas órfãs (atividade deixou de exigir após gerar)
+    if(!a||!a.slotKey||usados[a.slotKey])return;
+    const p=a.slotKey.split("__");
+    const status=a.envioConfirmado?"enviada":(a.impressa?"impressa":"gerada");
+    const proj=a.cliente?REG.projetos.find(x=>x.nome===a.cliente):null;
+    linhas.push({slotKey:a.slotKey, analista:a.analista||p[0], iso:a.data||p[1], slot:a.slot||p[2], atividade:a.atividade||"", cliente:a.cliente||"", gp:a.gp||(proj&&proj.gp)||"", status, obrigatoria:false, ata:a});
+    usados[a.slotKey]=true;
+  });
+  linhas.sort((x,y)=> String(y.iso||"").localeCompare(String(x.iso||"")) || String(x.analista||"").localeCompare(String(y.analista||"")));
+  return linhas;
+}
+function _popularFiltrosAtas(){
+  const host=el("atasFiltros"); if(!host)return;
+  const uniq=arr=>[...new Set(arr.filter(Boolean))].sort((a,b)=>String(a).localeCompare(String(b)));
+  const clientes=uniq(_atasLinhas.map(l=>l.cliente));
+  const analistas=uniq(_atasLinhas.map(l=>l.analista));
+  const gps=uniq(_atasLinhas.map(l=>l.gp));
+  const status=[["todos","Todos"],["pendente","Pendente"],["gerada","Gerada"],["impressa","Impressa"],["enviada","Enviada"]];
+  const opt=(arr,sel)=>`<option value="todos"${sel==="todos"?" selected":""}>Todos</option>`+arr.map(v=>`<option value="${enc(v)}"${sel===v?" selected":""}>${enc(v)}</option>`).join("");
+  host.innerHTML=`
+    <div class="f"><label>Cliente / Projeto</label><select id="atasFCliente">${opt(clientes,_atasFiltro.cliente)}</select></div>
+    <div class="f"><label>Analista</label><select id="atasFAnalista">${opt(analistas,_atasFiltro.analista)}</select></div>
+    <div class="f"><label>GP</label><select id="atasFGp">${opt(gps,_atasFiltro.gp)}</select></div>
+    <div class="f"><label>Status</label><select id="atasFStatus">${status.map(s=>`<option value="${s[0]}"${_atasFiltro.status===s[0]?" selected":""}>${s[1]}</option>`).join("")}</select></div>
+    <div class="spacer"></div>`;
+  const bind=(id,k)=>{ const e=el(id); if(e)e.addEventListener("change",()=>{ _atasFiltro[k]=e.value; renderAtasReport(); }); };
+  bind("atasFCliente","cliente"); bind("atasFAnalista","analista"); bind("atasFGp","gp"); bind("atasFStatus","status");
+}
+function renderAtasReport(){
+  const body=el("atasBody"); if(!body)return;
+  const f=_atasFiltro;
+  const linhas=_atasLinhas.filter(l=>
+    (f.cliente==="todos"||l.cliente===f.cliente) &&
+    (f.analista==="todos"||l.analista===f.analista) &&
+    (f.gp==="todos"||l.gp===f.gp) &&
+    (f.status==="todos"||l.status===f.status));
+  const obr=linhas.filter(l=>l.obrigatoria);
+  const obrig=obr.length;
+  const geradas=obr.filter(l=>l.ata).length;
+  const pendentes=obr.filter(l=>l.status==="pendente").length;
+  const impressas=linhas.filter(l=>l.ata&&l.ata.impressa).length;
+  const enviadas=linhas.filter(l=>l.ata&&l.ata.envioConfirmado).length;
+  const indice=obrig?Math.round(geradas/obrig*100):0;
+  const acc=indice>=80?"accent-ok":indice>=50?"accent-warn":"accent-bad";
+  const pend=obr.filter(l=>l.status==="pendente");
+  const rank=campo=>{ const m={}; pend.forEach(l=>{const v=l[campo]||"—"; m[v]=(m[v]||0)+1;}); return Object.keys(m).map(k=>({nome:k,n:m[k]})).sort((a,b)=>b.n-a.n).slice(0,8); };
+  const miniTab=(titulo,icone,rows)=>`<div style="flex:1;min-width:240px">
+    <div class="kpi-group-title"><span class="ico">${icone}</span>${titulo}</div>
+    ${rows.length?`<table class="rep-table"><thead><tr><th>Nome</th><th class="num">Pendentes</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${enc(r.nome)}</td><td class="num">${r.n}</td></tr>`).join("")}</tbody></table>`:`<div class="rep-empty">Sem pendências.</div>`}</div>`;
+  const pill=s=>{ const cls={pendente:"sp-pend",gerada:"sp-ger",impressa:"sp-imp",enviada:"sp-env"}[s]||""; const lbl={pendente:"Pendente",gerada:"Gerada",impressa:"Impressa",enviada:"Enviada"}[s]||s; return `<span class="atas-pill ${cls}">${lbl}</span>`; };
+  const rows=linhas.map(l=>{ const d=parseISO(l.iso); return `<tr>
+      <td class="mono">${enc(fmtDM(d))}/${d.getFullYear()}<div class="sub">${enc(l.slot)}</div></td>
+      <td>${enc(l.analista)}</td>
+      <td>${enc(l.cliente||"—")}</td>
+      <td>${enc(l.atividade||"—")}</td>
+      <td>${enc(l.gp||"—")}</td>
+      <td>${pill(l.status)}${l.obrigatoria?"":' <span class="atas-extra" title="Atividade não exige ata atualmente">extra</span>'}</td>
+    </tr>`; }).join("");
+  body.innerHTML=`
+    <div class="kpi-group-title"><span class="ico">📋</span>Indicadores do período</div>
+    <div class="kpi-grid" style="margin-bottom:18px">
+      <div class="kpi-card accent-info"><div class="kpi-l">Slots com obrigação de ata</div><div class="kpi-n">${obrig}</div><div class="kpi-sub">Atividades marcadas como “gera ATA”</div></div>
+      <div class="kpi-card accent-ok"><div class="kpi-l">Atas geradas</div><div class="kpi-n">${geradas}</div><div class="kpi-sub">de ${obrig} obrigatórias</div></div>
+      <div class="kpi-card ${pendentes>0?'accent-bad':'accent-ok'}"><div class="kpi-l">Atas pendentes</div><div class="kpi-n">${pendentes}</div><div class="kpi-sub">obrigatórias sem geração</div></div>
+      <div class="kpi-card ${acc}"><div class="kpi-l">Índice de geração</div><div class="kpi-n">${indice}<span class="unit">%</span></div><div class="kpi-sub">geradas ÷ obrigatórias</div></div>
+      <div class="kpi-card accent-proj"><div class="kpi-l">Atas impressas</div><div class="kpi-n">${impressas}</div><div class="kpi-sub">bloqueadas para edição</div></div>
+      <div class="kpi-card accent-info"><div class="kpi-l">Envio confirmado</div><div class="kpi-n">${enviadas}</div><div class="kpi-sub">atas com envio validado</div></div>
+    </div>
+    <div class="kpi-group-title"><span class="ico">🎯</span>Pendências por responsável</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:18px">
+      ${miniTab("Analistas","👤",rank("analista"))}
+      ${miniTab("Clientes / Projetos","🏢",rank("cliente"))}
+      ${miniTab("GPs","🧭",rank("gp"))}
+    </div>
+    <div class="kpi-group-title"><span class="ico">🗂️</span>Atas do período <span style="font-size:11px;color:var(--fn-faint);font-weight:600;text-transform:none;letter-spacing:normal;margin-left:auto">${linhas.length} registro(s)</span></div>
+    ${linhas.length?`<table class="rep-table"><thead><tr><th>Data</th><th>Analista</th><th>Cliente</th><th>Atividade</th><th>GP</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`:`<div class="rep-empty" style="padding:30px">Nenhuma ata ou obrigação de ata no período/escopo selecionado.</div>`}`;
+  lucideRefresh();
 }
 
 /* ===================== modal INCLUIR ALOCAÇÃO ===================== */
@@ -3242,7 +3746,7 @@ function renderList(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
       return `<div class="row${ina(at)}" data-nome="${enc(a.nome)}">
       <div class="av" style="background:${colorFor(a.nome)}">${t.icone}</div>
       <div class="main"><div class="nm">${enc(a.nome)}${selo(at)}</div>
-      <div class="meta"><span><b>${enc(t.nome)}</b></span>${(a.slotsNecessarios!=null&&a.slotsNecessarios!=='')?`<span>· ${a.slotsNecessarios} slot(s)</span>`:''}${(a.etapa&&ETAPA_BY_ID[a.etapa])?`<span>· ${enc(ETAPA_BY_ID[a.etapa].label)}</span>`:''}${a.exigeObs?'<span>· exige observação</span>':''}${a.enviaEmail===true?'<span>· com e-mail</span>':''}</div></div>
+      <div class="meta"><span><b>${enc(t.nome)}</b></span>${(a.slotsNecessarios!=null&&a.slotsNecessarios!=='')?`<span>· ${a.slotsNecessarios} slot(s)</span>`:''}${(a.etapa&&ETAPA_BY_ID[a.etapa])?`<span>· ${enc(ETAPA_BY_ID[a.etapa].label)}</span>`:''}${a.exigeObs?'<span>· exige observação</span>':''}${a.exigeAta?'<span>· gera ATA</span>':''}${a.enviaEmail===true?'<span>· com e-mail</span>':''}</div></div>
       <span class="chev">›</span></div>`;}).join("");
   }else if(actTab==="feriados"){
     const sorted=(REG.feriados||[]).filter(f=>f.nome.toLowerCase().includes(actSearch)).slice().sort((a,b)=>(a.data||"").localeCompare(b.data||""));
@@ -3450,25 +3954,99 @@ function _renderPrevLinhas(){
   lucideRefresh();
 }
 
+/* ===================== Aba Contato Cliente (cadastro de projeto) =====================
+   Contatos usados apenas como SUGESTÃO de envio da ATA — sem disparo automático.
+   Modelo por contato: {nome, email, cargo, tipo, ativo}  · tipo ∈ principal|copia|opcional
+   Campo opcional no projeto (p.contatosCliente=[]) — retrocompatível, sem migração. */
+const CONTATO_TIPOS=[["principal","Principal"],["copia","Cópia"],["opcional","Opcional"]];
+function _contatosTabHTML(p){
+  const podeEditar=canEditAction("cadastros");
+  return `
+  <div class="pv-proto-banner"><i data-lucide="info"></i> Contatos do cliente usados apenas como <b>sugestão de envio</b> da ATA — nenhum e-mail é disparado automaticamente. <b>Principal</b> = destinatário · <b>Cópia</b> = Cc · <b>Opcional</b> = sugerido.</div>
+  <div class="ct-head"><div>Nome</div><div>E-mail</div><div>Cargo / área</div><div>Tipo</div><div>Ativo</div><div></div></div>
+  <div id="projContatoLista"></div>
+  ${podeEditar
+    ? `<div style="margin-top:12px"><button class="btn" id="ctAdd" type="button"><i data-lucide="plus"></i> Adicionar contato</button></div>`
+    : `<div class="hint" style="margin-top:10px">Somente leitura — sem permissão de edição em Cadastros.</div>`}`;
+}
+function _renderContatos(p){
+  const host=el("projContatoLista"); if(!host)return;
+  const arr=Array.isArray(p.contatosCliente)?p.contatosCliente:[];
+  const podeEditar=canEditAction("cadastros");
+  const dis=podeEditar?"":"disabled";
+  if(!arr.length){
+    host.innerHTML=`<div class="hint" style="padding:10px">Nenhum contato cadastrado.${podeEditar?' Use “Adicionar contato”.':''}</div>`;
+    return;
+  }
+  host.innerHTML=arr.map((c,i)=>`<div class="ct-row" data-idx="${i}">
+    <input type="text"  class="ct-nome"  value="${enc(c.nome||'')}"  placeholder="Nome" ${dis}>
+    <input type="email" class="ct-email" value="${enc(c.email||'')}" placeholder="email@cliente.com" ${dis}>
+    <input type="text"  class="ct-cargo" value="${enc(c.cargo||'')}" placeholder="Cargo / área" ${dis}>
+    <select class="ct-tipo" ${dis}>${CONTATO_TIPOS.map(t=>`<option value="${t[0]}" ${(c.tipo||'principal')===t[0]?'selected':''}>${t[1]}</option>`).join("")}</select>
+    <label class="ct-ativo-wrap" title="Contato ativo"><input type="checkbox" class="ct-ativo" ${c.ativo!==false?'checked':''} ${dis}></label>
+    ${podeEditar?`<button class="btn ct-del" type="button" data-idx="${i}" title="Remover contato"><i data-lucide="trash-2"></i></button>`:`<span></span>`}
+  </div>`).join("");
+  lucideRefresh();
+}
+// Lê as linhas do DOM na ORDEM exibida, SEM filtrar vazias (preserva alinhamento de índices
+// durante a edição). O filtro de linhas vazias acontece só no Salvar do projeto.
+function _lerContatosDOM(){
+  const host=el("projContatoLista"); if(!host)return [];
+  return [...host.querySelectorAll(".ct-row")].map(r=>{
+    const g=s=>{const e=r.querySelector(s);return e?e.value:"";};
+    const chk=r.querySelector(".ct-ativo");
+    return {
+      nome:(g(".ct-nome")||"").trim(),
+      email:(g(".ct-email")||"").trim(),
+      cargo:(g(".ct-cargo")||"").trim(),
+      tipo:g(".ct-tipo")||"principal",
+      ativo: chk ? !!chk.checked : true
+    };
+  });
+}
+function _bindContatoTab(p){
+  if(!Array.isArray(p.contatosCliente)) p.contatosCliente=[];
+  _renderContatos(p);
+  const add=el("ctAdd");
+  if(add)add.addEventListener("click",()=>{
+    if(!canEditAction("cadastros"))return;
+    p.contatosCliente=_lerContatosDOM(); // sincroniza edições atuais antes de acrescentar
+    p.contatosCliente.push({nome:"",email:"",cargo:"",tipo:"principal",ativo:true});
+    _renderContatos(p);
+  });
+  const host=el("projContatoLista");
+  if(host)host.addEventListener("click",e=>{
+    const del=e.target.closest(".ct-del"); if(!del)return;
+    if(!canEditAction("cadastros"))return;
+    p.contatosCliente=_lerContatosDOM(); // re-sincroniza (índices = ordem do DOM)
+    const idx=+del.dataset.idx;
+    if(idx>=0 && idx<p.contatosCliente.length){ p.contatosCliente.splice(idx,1); _renderContatos(p); }
+  });
+}
+
 function _bindPrevistoTab(p, isNew){
   _pvProj=p;
   if(!Array.isArray(p.previstoLinhas)) p.previstoLinhas=[];
   _prevTabLinhas=p.previstoLinhas;
-  const tabDados=el("projSubtabDados"), tabPrev=el("projSubtabPrev");
-  const paneD=el("projPaneDados"), paneP=el("projPanePrev");
-  function showTab(prev){
-    if(paneD)paneD.style.display=prev?"none":"";
-    if(paneP)paneP.style.display=prev?"":"none";
-    if(tabDados)tabDados.classList.toggle("on",!prev);
-    if(tabPrev)tabPrev.classList.toggle("on",prev);
-    const f=el("actBody").querySelector(".modal-f"); if(f) f.style.display=prev?"none":"";  // rodapé Salvar pertence à aba Dados
-    if(prev){
+  const tabDados=el("projSubtabDados"), tabPrev=el("projSubtabPrev"), tabCont=el("projSubtabContato");
+  const paneD=el("projPaneDados"), paneP=el("projPanePrev"), paneC=el("projPaneContato");
+  function showTab(which){ // "dados" | "prev" | "contato"
+    const isPrev=which==="prev", isCont=which==="contato", isDados=!isPrev&&!isCont;
+    if(paneD)paneD.style.display=isDados?"":"none";
+    if(paneP)paneP.style.display=isPrev?"":"none";
+    if(paneC)paneC.style.display=isCont?"":"none";
+    if(tabDados)tabDados.classList.toggle("on",isDados);
+    if(tabPrev)tabPrev.classList.toggle("on",isPrev);
+    if(tabCont)tabCont.classList.toggle("on",isCont);
+    const f=el("actBody").querySelector(".modal-f"); if(f) f.style.display=isPrev?"none":"";  // rodapé Salvar vale p/ Dados e Contato, não p/ Previsto
+    if(isPrev){
       const podeEditar=canEditAction("prealoc");
       ["pvAn","pvSlot","pvAtv","pvIni","pvAdd"].forEach(id=>{ const e=el(id); if(e) e.disabled=!podeEditar; });
     }
   }
-  if(tabDados)tabDados.addEventListener("click",()=>showTab(false));
-  if(tabPrev)tabPrev.addEventListener("click",()=>{ showTab(true); _renderPrevLinhas(); lucideRefresh(); });
+  if(tabDados)tabDados.addEventListener("click",()=>showTab("dados"));
+  if(tabPrev)tabPrev.addEventListener("click",()=>{ showTab("prev"); _renderPrevLinhas(); lucideRefresh(); });
+  if(tabCont)tabCont.addEventListener("click",()=>{ showTab("contato"); lucideRefresh(); });
   const add=el("pvAdd");
   if(add)add.addEventListener("click",()=>{
     if(!canEditAction("prealoc")){ alert("Você não tem permissão de edição na Pré-alocação."); return; }
@@ -3576,6 +4154,7 @@ function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
       <div class="proj-subtabs">
         <button class="proj-subtab on" id="projSubtabDados"><i data-lucide="folder"></i> Dados do projeto</button>
         ${canViewAction("prealoc")?`<button class="proj-subtab" id="projSubtabPrev"><i data-lucide="calendar-clock"></i> Previsto</button>`:""}
+        <button class="proj-subtab" id="projSubtabContato"><i data-lucide="contact"></i> Contato Cliente</button>
       </div>
       <div id="projPaneDados">
       <div class="form-grid">
@@ -3612,14 +4191,16 @@ function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
           <div class="hint">O <b>tipo do projeto</b> limita quais atividades podem ser lançadas nele. O <b>bloco Go-Live</b> alimenta os relatórios de Gestão e Controle de Go-Lives (datas, situação, modalidade).</div>
         </div>
       </div></div>
-      <div id="projPanePrev" style="display:none">${_previstoTabHTML(p)}</div>`;
+      <div id="projPanePrev" style="display:none">${_previstoTabHTML(p)}</div>
+      <div id="projPaneContato" style="display:none">${_contatosTabHTML(p)}</div>`;
     _bindPrevistoTab(p, isNew);
+    _bindContatoTab(p);
     bindFormFooter(()=>{
       const nome=el("f_nome").value.trim();if(!nome)return;
       const analistas=[...b.querySelectorAll('#f_analistas input:checked')].map(i=>dec(i.value));
       const _catBtn=b.querySelector('#f_cat .tier-chip.on');
       const categoria=_catBtn?_catBtn.dataset.cat:"";
-      const obj={nome,tipo:el("f_tipo").value,segmentacao:el("f_seg").value,categoria:categoria||"",status:el("f_status").value,gp:el("f_gp").value,lider:el("f_lider").value,analistas,dtRecebimento:el("f_dtReceb").value,goLivePrevisto:el("f_glPrev").value,goLiveAjustado:el("f_glAju").value,goLiveRealizado:el("f_glReal").value,goLiveModalidade:el("f_glMod").value,goLiveSituacao:el("f_glSit").value,etapaAtual:el("f_etapa").value,dtDiscovery:el("f_dtDisc").value,dtCadBasicos:el("f_dtCad").value,dtLogistica:el("f_dtLog").value,dtBackoffice:el("f_dtBack").value,dtHypercare:el("f_dtHyper").value,dtMonitoramento:el("f_dtMon").value,dtFrota:el("f_dtFrota").value,dtSustentacao:el("f_dtSust").value};
+      const obj={nome,tipo:el("f_tipo").value,segmentacao:el("f_seg").value,categoria:categoria||"",status:el("f_status").value,gp:el("f_gp").value,lider:el("f_lider").value,analistas,contatosCliente:_lerContatosDOM().filter(c=>c.nome||c.email),dtRecebimento:el("f_dtReceb").value,goLivePrevisto:el("f_glPrev").value,goLiveAjustado:el("f_glAju").value,goLiveRealizado:el("f_glReal").value,goLiveModalidade:el("f_glMod").value,goLiveSituacao:el("f_glSit").value,etapaAtual:el("f_etapa").value,dtDiscovery:el("f_dtDisc").value,dtCadBasicos:el("f_dtCad").value,dtLogistica:el("f_dtLog").value,dtBackoffice:el("f_dtBack").value,dtHypercare:el("f_dtHyper").value,dtMonitoramento:el("f_dtMon").value,dtFrota:el("f_dtFrota").value,dtSustentacao:el("f_dtSust").value};
       if(isNew){REG.projetos.push(obj);audit("project.create",nome,null,obj);}
       else{
         const antes=Object.assign({},actEditing);
@@ -3727,7 +4308,7 @@ function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
     },isNew?null:()=>{REG.projetos.forEach(p=>{if(p.gp===nome0)p.gp="";});REG.gps=REG.gps.filter(x=>x!==nome0);if(REG.gpsInativos)delete REG.gpsInativos[nome0];if(REG.gpsEmails)delete REG.gpsEmails[nome0];finishForm();});
   }
   else if(actTab==="atividades"){
-    const a=isNew?{nome:"",tipo:"implantacao",ativo:true,exigeObs:false,slotsNecessarios:null,etapa:""}:actEditing;
+    const a=isNew?{nome:"",tipo:"implantacao",ativo:true,exigeObs:false,exigeAta:false,slotsNecessarios:null,etapa:""}:actEditing;
     const userTag=(_currentUser&&_currentUser.email)||"local";
     const ativo=a.ativo!==false;
     b.innerHTML=`<div class="crumb"><button id="back">‹ Atividades</button>/ ${isNew?'Nova':enc(a.nome)}</div>
@@ -3738,6 +4319,7 @@ function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
         <div class="f"><label>Slots necessários <span class="lbl-soft">· por ocorrência</span></label><input type="number" id="f_slots" min="0" max="60" step="1" inputmode="numeric" value="${(a.slotsNecessarios!=null&&a.slotsNecessarios!=='')?enc(String(a.slotsNecessarios)):''}" placeholder="Ex.: 2"></div>
         <div class="f"><label>Etapa do projeto <span class="lbl-soft">· opcional</span></label><select id="f_atvEtapa"><option value="">— (nenhuma)</option>${ETAPAS.map(e=>`<option value="${e.id}" ${e.id===(a.etapa||'')?'selected':''}>${e.label}</option>`).join("")}</select></div>
         <div class="f full"><label><input type="checkbox" id="f_obs" ${a.exigeObs?'checked':''} style="margin-right:6px;vertical-align:middle"> Exige observação ao lançar no slot</label></div>
+        <div class="f full"><label><input type="checkbox" id="f_ata" ${a.exigeAta?'checked':''} style="margin-right:6px;vertical-align:middle"> Obrigatório gerar ATA nos slots com esta atividade</label></div>
         <div class="f full"><label><input type="checkbox" id="f_atvEmail" ${a.enviaEmail===true?'checked':''} style="margin-right:6px;vertical-align:middle"> Enviar e-mail de notificação ao alocar esta atividade</label></div>
         <div class="f full"><label>Etapa de capacitação (de-para · opcional)</label><select id="f_capstage">${(typeof capStageSelectOptions==='function')?capStageSelectOptions(a.capTrack,a.capStage):'<option value="">— (nenhuma)</option>'}</select></div>
       </div>
@@ -3747,6 +4329,7 @@ function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
       const tipo=el("f_tipo").value;
       const ativoNovo=el("f_ativo").value==="ativo";
       const exigeObs=el("f_obs").checked;
+      const exigeAta=el("f_ata")?el("f_ata").checked:false;
       const enviaEmail=el("f_atvEmail")?el("f_atvEmail").checked:false;
       const _slotsRaw=el("f_slots")?el("f_slots").value.trim():"";
       const slotsNecessarios=_slotsRaw===""?null:Math.max(0,parseInt(_slotsRaw,10)||0);
@@ -3756,14 +4339,14 @@ function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
       if(isNew){
         if((REG.atividades||[]).some(x=>x.nome.toLowerCase()===nome.toLowerCase())){alert("Já existe uma atividade com este nome.");return;}
         REG.atividades=REG.atividades||[];
-        REG.atividades.push({nome,tipo,ativo:ativoNovo,exigeObs,enviaEmail,slotsNecessarios,etapa,capTrack,capStage,createdAt:agora,createdBy:userTag,updatedAt:agora,updatedBy:userTag});
+        REG.atividades.push({nome,tipo,ativo:ativoNovo,exigeObs,exigeAta,enviaEmail,slotsNecessarios,etapa,capTrack,capStage,createdAt:agora,createdBy:userTag,updatedAt:agora,updatedBy:userTag});
       }else{
         // se renomeou, propaga nas alocações que apontavam pelo nome antigo
         if(actEditing.nome!==nome){
           Object.values(DATA).forEach(v=>{if(v.atividade===actEditing.nome)v.atividade=nome;});
           actEditing.nome=nome;
         }
-        actEditing.tipo=tipo;actEditing.ativo=ativoNovo;actEditing.exigeObs=exigeObs;actEditing.enviaEmail=enviaEmail;actEditing.slotsNecessarios=slotsNecessarios;actEditing.etapa=etapa;actEditing.capTrack=capTrack;actEditing.capStage=capStage;
+        actEditing.tipo=tipo;actEditing.ativo=ativoNovo;actEditing.exigeObs=exigeObs;actEditing.exigeAta=exigeAta;actEditing.enviaEmail=enviaEmail;actEditing.slotsNecessarios=slotsNecessarios;actEditing.etapa=etapa;actEditing.capTrack=capTrack;actEditing.capStage=capStage;
         actEditing.updatedAt=agora;actEditing.updatedBy=userTag;
       }
       finishForm();
@@ -8488,6 +9071,14 @@ function bind(){
   el("mClose").addEventListener("click",closeAlloc);
   el("mFechar").addEventListener("click",closeAlloc);
   el("overlay").addEventListener("click",e=>{if(e.target.id==="overlay")closeAlloc();});
+  { const ac=el("ataClose");  if(ac) ac.addEventListener("click",closeAta); }
+  { const af=el("ataFechar"); if(af) af.addEventListener("click",closeAta); }
+  { const as=el("ataSalvar"); if(as) as.addEventListener("click",salvarAta); }
+  { const ai=el("ataImprimir"); if(ai) ai.addEventListener("click",imprimirAta); }
+  { const ao=el("ataOverlay");if(ao) ao.addEventListener("click",e=>{if(e.target.id==="ataOverlay")closeAta();}); }
+  { const ac=el("atasClose"); if(ac) ac.addEventListener("click",closeAtasReport); }
+  { const aa=el("atasAplicar"); if(aa) aa.addEventListener("click",aplicarPeriodoAtas); }
+  { const ao2=el("atasOverlay");if(ao2) ao2.addEventListener("click",e=>{if(e.target.id==="atasOverlay")closeAtasReport();}); }
   // Modal de Incluir Alocação
   el("incluirAlocBtn").addEventListener("click",()=>openIncluirAloc({}));
   el("incClose").addEventListener("click",closeIncluirAloc);
@@ -8534,7 +9125,7 @@ function bind(){
   el("cfgSave").addEventListener("click",saveFirebaseConfig);
   el("cfgCopy").addEventListener("click",copyMyConfig);
   el("cfgClear").addEventListener("click",clearFirebaseConfig);
-  document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeAlloc();closeActions();closeCfg();closeReports();closeKPIs();closeEsteira();closeDiscovery();try{closeConflitos();}catch(_e){}try{closeGerarPrev();}catch(_e){}}});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape"){closeAlloc();closeActions();closeCfg();closeReports();closeKPIs();closeEsteira();closeDiscovery();try{closeAta();}catch(_e){}try{closeAtasReport();}catch(_e){}try{closeConflitos();}catch(_e){}try{closeGerarPrev();}catch(_e){}}});
   el("resetBtn").addEventListener("click",()=>{
     if(!isAdmin()){alert("Apenas administradores podem restaurar os dados de exemplo.");return;}
     if(!confirm("Restaurar os dados de exemplo? Isso sobrescreve os cadastros e alocações atuais na nuvem."))return;
