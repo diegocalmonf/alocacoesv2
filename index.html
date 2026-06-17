@@ -259,6 +259,7 @@
     <div class="modal-f">
       <button class="btn primary wide" id="mAlterar"><i data-lucide="pencil"></i>Alterar/Sobrescrever este slot</button>
       <button class="btn" id="mLiberar" style="display:none"><i data-lucide="eraser"></i>Liberar slot (tornar livre)</button>
+      <button class="btn" id="mAta" style="display:none"><i data-lucide="file-signature"></i>Gerar ATA</button>
       <button class="btn" id="mFechar"><i data-lucide="x"></i>Fechar</button>
     </div>
   </div>
@@ -514,6 +515,44 @@
     <div class="act-body" id="kpiBody"></div>
   </div>
 </div>
+
+<!-- Tela da ATA (Fase 2) -->
+<div class="overlay as-page" id="ataOverlay">
+  <div class="modal big">
+    <div class="modal-h">
+      <div><div class="t" id="ataTitle"><i data-lucide="file-signature"></i>ATA</div><div class="s" id="ataSub"></div></div>
+      <button class="x" id="ataClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="act-body" id="ataBody"></div>
+    <div class="modal-f">
+      <button class="btn primary" id="ataSalvar"><i data-lucide="save"></i>Salvar ATA</button>
+      <button class="btn" id="ataImprimir" style="display:none"><i data-lucide="printer"></i>Imprimir e bloquear</button>
+      <button class="btn" id="ataFechar"><i data-lucide="x"></i>Fechar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Visão executiva de Atas (Fase 5) -->
+<div class="overlay as-page" id="atasOverlay">
+  <div class="modal big">
+    <div class="modal-h">
+      <div><div class="t"><i data-lucide="file-signature"></i>Atas · NS ALOC</div><div class="s">Controle e indicadores das atas no período</div></div>
+      <button class="x" id="atasClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="filtros-periodo" data-painel-periodo="atas">
+      <span>Período de Análise:</span>
+      <input type="date" id="atasDataInicio">
+      <span class="ate">até</span>
+      <input type="date" id="atasDataFim">
+      <button class="btn filtro-aplicar" id="atasAplicar"><i data-lucide="filter"></i> Aplicar Filtro</button>
+    </div>
+    <div class="rep-filters" id="atasFiltros"></div>
+    <div class="act-body" id="atasBody"></div>
+  </div>
+</div>
+
+<!-- Container de impressão da ATA (Fase 3): preenchido sob demanda; visível só em @media print -->
+<div id="ataPrint" aria-hidden="true"></div>
 
 <!-- Script no FINAL do body: garante que todo o DOM já existe antes do bind()/init -->
 <script src="./js/script.js"></script>
