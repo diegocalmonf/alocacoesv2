@@ -339,6 +339,21 @@ td.cell.locked,td.gcell.locked{cursor:not-allowed}
 .atas-pill.sp-imp{background:#e7eefb;color:#2b4f9e}
 .atas-pill.sp-env{background:#e6f4ea;color:#2f7a3a}
 .atas-extra{font-size:10px;color:var(--faint);font-style:italic;margin-left:4px}
+/* ===== Participantes da ATA ===== */
+.ptc-head,.ptc-row{display:grid;grid-template-columns:1.4fr 1.1fr 1.1fr 40px;gap:8px;align-items:center}
+.ptc-head{font-size:10.5px;font-weight:600;color:#999;text-transform:uppercase;letter-spacing:.04em;padding:0 4px 5px}
+.ptc-row{padding:3px 4px}
+.ptc-row+.ptc-row{margin-top:5px}
+.ptc-row input{width:100%;padding:7px 9px;border:1px solid var(--line2);border-radius:8px;font:inherit;font-size:13px;background:#fff;box-sizing:border-box}
+.ptc-row input:disabled{background:var(--paper);color:var(--muted)}
+.ptc-row .ptc-del{padding:6px;min-width:0}
+#ataAddParticipante{margin-top:9px}
+@media(max-width:760px){.ptc-head{display:none}.ptc-row{grid-template-columns:1fr 1fr;gap:6px}.ptc-row .ptc-del{grid-column:1/-1}}
+/* participantes no documento impresso */
+.apr-ptc-sec{grid-column:1/-1;margin-bottom:16px}
+.apr-ptc{width:100%;border-collapse:collapse;margin-top:4px}
+.apr-ptc th{font-size:9.5px;font-weight:700;color:#777;text-transform:uppercase;letter-spacing:.04em;text-align:left;border-bottom:1px solid #bbb;padding:5px 6px}
+.apr-ptc td{font-size:12px;padding:5px 6px;border-bottom:1px solid #eee;color:#1a1a1a}
 @media(max-width:760px){.ata-auto{grid-template-columns:1fr}}
 /* ===== Impressão da ATA (Fase 3) ===== */
 #ataPrint{position:absolute;left:-99999px;top:0}
@@ -360,8 +375,11 @@ td.cell.locked,td.gcell.locked{cursor:not-allowed}
 @media print{
   body > *:not(#ataPrint){display:none !important}
   #ataPrint{position:static;left:0;display:block}
+  .apr-doc{max-width:none;width:100%;margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .apr-multi .apr-v{background:#fff}
-  @page{margin:16mm}
+  .apr-grid{break-inside:avoid}
+  .apr-sign{break-inside:avoid}
+  @page{size:A4;margin:15mm}
 }
 .pvx-row{padding:8px 12px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:12.5px;margin-bottom:6px}
 .pvx-row-warn{border-color:#f3c4c4;background:#fff7f7}
