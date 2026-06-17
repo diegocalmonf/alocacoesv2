@@ -1593,7 +1593,23 @@ function _renomearAtasDoAnalista(old,nv){
 
 /* ===================== render grade ===================== */
 // Monta o HTML de um chip de alocação, com ícone/tooltip de observação se houver
-function chipHTML(cat,r,classe){
+// Indicador de ata no chip do slot (grade). Só aparece quando a atividade exige ata.
+// Dois estados: "emitida" (existe registro de ata) e "pendente" (obrigatória sem ata).
+// SVG inline (não depende de lucideRefresh, que não roda após a grade).
+function _ataIndicadorHTML(slotKey, r){
+  const atv = r ? atividadeObj(r.atividade) : null;
+  if(!(atv && atv.exigeAta)) return "";
+  const folha='<path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z"/><polyline points="14 2 14 8 20 8"/>';
+  const svg=(extra)=>`<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">${folha}${extra||""}</svg>`;
+  const ata = slotKey ? _ataDoSlot(slotKey) : null;
+  if(ata){
+    const st = ata.envioConfirmado?"enviada":(ata.impressa?"impressa":"gerada");
+    const lbl = {gerada:"Ata gerada",impressa:"Ata impressa (bloqueada)",enviada:"Ata enviada"}[st]||"Ata emitida";
+    return `<span class="ata-ind emitida" title="${lbl}">${svg('<path d="m9 15 2 2 4-4"/>')}</span>`;
+  }
+  return `<span class="ata-ind pendente" title="Ata pendente (obrigatória)">${svg()}</span>`;
+}
+function chipHTML(cat,r,classe,slotKey){
   classe=classe||"chip";
   const obs=(r&&r.obs)?String(r.obs).trim():"";
   const cli=r.cliente||"";
@@ -1606,9 +1622,10 @@ function chipHTML(cat,r,classe){
   const labelSub  = usaAtv ? (cat==="c-livre"?"":"") : atv;
   const titulo=obs?enc((cli||"—")+" — "+(atv||"")+"\n📝 "+obs):"";
   const icone=obs?'<span class="obs-mark" title="Há observação neste slot">📝</span>':"";
+  const ind=_ataIndicadorHTML(slotKey, r);
   if(cat==="c-livre")
-    return `<div class="${classe} ${cat}"${titulo?` title="${titulo}"`:""}><span class="cli">${enc(labelTopo||"Livre")}</span>${icone}</div>`;
-  return `<div class="${classe} ${cat}"${titulo?` title="${titulo}"`:""}><span class="cli">${enc(labelTopo)}</span>${labelSub?`<span class="atv">${enc(labelSub)}</span>`:""}${icone}</div>`;
+    return `<div class="${classe} ${cat}"${titulo?` title="${titulo}"`:""}><span class="cli">${enc(labelTopo||"Livre")}</span>${icone}${ind}</div>`;
+  return `<div class="${classe} ${cat}"${titulo?` title="${titulo}"`:""}><span class="cli">${enc(labelTopo)}</span>${labelSub?`<span class="atv">${enc(labelSub)}</span>`:""}${icone}${ind}</div>`;
 }
 // Chip neutro para um slot ocupado por projeto de OUTRO GP (escopo "Meus" do GP).
 // Mostra que o analista está indisponível, sem revelar o projeto/cliente alheio.
@@ -1852,7 +1869,7 @@ function renderBoardAnalista(){
       const r=DATA[key(consultor,iso,s.id)];const cat=categoria(r);
       let inner, locked=false;
       if(cat!=="empty" && foraDoEscopoAtual(r)){inner=chipForaEscopoHTML("chip");locked=true;}
-      else if(cat!=="empty")inner=chipHTML(cat,r,"chip");
+      else if(cat!=="empty")inner=chipHTML(cat,r,"chip",key(consultor,iso,s.id));
       else if(fn)inner=`<div class="chip c-aus"><span class="cli">${fn}</span><span class="atv">Feriado</span></div>`;
       else inner=`<div class="chip empty"><span class="plus">+</span></div>`;
       inner=_decorarPrevisto(consultor,iso,s.id,inner,cat,fn,locked,"chip");
@@ -1876,7 +1893,7 @@ function renderGeralDia(){
     work.forEach(s=>{const r=DATA[key(n,iso,s.id)];const cat=categoria(r);
       let inner, locked=false;
       if(cat!=="empty" && foraDoEscopoAtual(r)){inner=chipForaEscopoHTML("gchip");locked=true;}
-      else if(cat!=="empty")inner=chipHTML(cat,r,"gchip");
+      else if(cat!=="empty")inner=chipHTML(cat,r,"gchip",key(n,iso,s.id));
       else if(fn)inner=`<div class="gchip c-aus"><span class="cli">${fn}</span></div>`;
       else inner=`<div class="gchip empty"></div>`;
       inner=_decorarPrevisto(n,iso,s.id,inner,cat,fn,locked,"gchip");
@@ -1925,7 +1942,7 @@ function renderGeralResumo(){
         const r=DATA[key(n,iso,s.id)];const cat=categoria(r);
         let inner, locked=false;
         if(cat!=="empty" && foraDoEscopoAtual(r)){inner=chipForaEscopoHTML("chip");locked=true;}
-        else if(cat!=="empty")inner=chipHTML(cat,r,"chip");
+        else if(cat!=="empty")inner=chipHTML(cat,r,"chip",key(n,iso,s.id));
         else if(fn)inner=`<div class="chip c-aus"><span class="cli">${fn}</span><span class="atv">Feriado</span></div>`;
         else inner=`<div class="chip empty"><span class="plus">+</span></div>`;
         inner=_decorarPrevisto(n,iso,s.id,inner,cat,fn,locked,"chip");
@@ -1981,7 +1998,7 @@ function renderGradeProjetoCompacta(){
       const cat=categoria(c.r);
       chips+=`<button type="button" class="pc-cell" data-nome="${enc(nome)}" data-iso="${c.iso}" data-slot="${enc(c.slot)}">
         <div class="pc-cell-when">${dataLbl} · <b>${enc(c.slot)}</b></div>
-        ${chipHTML(cat,c.r,"gchip")}
+        ${chipHTML(cat,c.r,"gchip",key(nome,c.iso,c.slot))}
       </button>`;
     });
     blocos+=`<section class="pc-analyst">
@@ -2032,7 +2049,15 @@ function renderBoard(){
 /* Corpo síncrono do render. Não chamar diretamente em fluxos normais — use renderAll()
    (que coalesce múltiplas chamadas em um único frame). Disponível para casos pontuais
    que precisem do DOM já atualizado no mesmo tick. */
-function _renderAllNow(){if(ALLOC_WINDOWED_READ){try{_carregarJanela(mesesVisiveis());}catch(e){}}try{_carregarJanelaPrev(mesesVisiveis());}catch(e){}renderControls();renderHeader();renderStats();renderBoard();updateVersionLabel();try{renderHome();}catch(e){}lucideRefresh();}
+function _renderAllNow(){if(ALLOC_WINDOWED_READ){try{_carregarJanela(mesesVisiveis());}catch(e){}}try{_carregarJanelaPrev(mesesVisiveis());}catch(e){}try{_carregarAtasJanela(mesesVisiveis());}catch(e){}renderControls();renderHeader();renderStats();renderBoard();updateVersionLabel();try{renderHome();}catch(e){}lucideRefresh();}
+// Carrega as atas dos meses visíveis (uma vez por mês) e re-renderiza só o board
+// quando chegar dado novo, para os indicadores aparecerem sem recarregar tudo.
+function _carregarAtasJanela(meses){
+  if(!_db || !Array.isArray(meses)) return;
+  const faltam=meses.filter(m=>!_atasMeses[m]);
+  if(!faltam.length) return;
+  Promise.all(faltam.map(m=>_carregarAtasMes(m))).then(()=>{ try{ renderBoard(); }catch(e){} });
+}
 /* Coalescência: uma rajada de chamadas (carga inicial de buckets, child_changed em
    sequência, re-entrância via _carregarJanela) vira um único render por frame.
    Maior ganho de performance da Fase 1. */
@@ -3015,7 +3040,7 @@ function _montarAtaDoForm(ctx, existente, overrides){
 // Grava a ata (Firebase ou modo local) + atualiza cache + auditoria.
 function _gravarAta(ata, id, slotKey, mes, existente, auditKind, onOk){
   const antesAudit = existente ? (function(){const c=Object.assign({},existente);delete c._id;delete c._mes;return c;})() : null;
-  const aplicarLocal=()=>{ _atasCache[slotKey]=Object.assign({_id:id,_mes:mes},ata); audit(auditKind, id, antesAudit, ata); };
+  const aplicarLocal=()=>{ _atasCache[slotKey]=Object.assign({_id:id,_mes:mes},ata); audit(auditKind, id, antesAudit, ata); try{ renderBoard(); }catch(e){} };
   if(!_db){ aplicarLocal(); if(onOk)onOk(); return; }
   _db.ref(ATAS_PATH+"/"+mes+"/"+id).set(sanitizeForFirebase(ata))
     .then(()=>{ aplicarLocal(); if(onOk)onOk(); })
