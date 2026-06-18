@@ -1488,7 +1488,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.68.0";
+const APP_VERSION = "1.69.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -3936,6 +3936,8 @@ function _pvDurAtiv(atvNome){
 }
 function _ehDiaUtil(dt){ const fer=feriadosMap(); return dt.getDay()!==0&&dt.getDay()!==6&&!fer[toISO(dt)]; }
 function _proxDiaUtil(dt){ let d=new Date(dt),g=0; while(!_ehDiaUtil(d)&&g++<400)d=addDays(d,1); return d; }
+// Dia útil igual ou anterior (recua p/ trás se cair em fim de semana/feriado).
+function _diaUtilOuAnterior(dt){ let d=new Date(dt),g=0; while(!_ehDiaUtil(d)&&g++<400)d=addDays(d,-1); return d; }
 // ISO do n-ésimo dia útil contando INCLUSIVO a partir de iniISO.
 function _avancaDiasUteis(iniISO,n){
   let d=_proxDiaUtil(parseISO(iniISO)); let c=1,g=0;
@@ -3968,17 +3970,28 @@ function _prevLinhasOverlap(){
   return pares;
 }
 // Recalcula início/fim de TODAS as linhas em cascata (ordem do array).
+// Início pode ser manual (iniManual) ou encadeado. Término pode ser manual (fimManual):
+// nesse caso a data é respeitada e os SLOTS passam a refletir o intervalo real de dias
+// úteis (ini..fim) — é assim que uma atividade pode levar mais ou menos slots que o padrão.
 function _pvRecalcChain(p){
   const L=p&&p.previstoLinhas||[]; let cursorFim=null;
   L.forEach((l,i)=>{
-    l.slots=_pvDurAtiv(l.atv);
+    const durAtiv=_pvDurAtiv(l.atv);                 // duração padrão da atividade (cadastro)
     let ini;
     if(l.iniManual && l.ini) ini=l.ini;
     else if(cursorFim) ini=toISO(_proxDiaUtil(addDays(parseISO(cursorFim),1)));
     else ini=(i===0?(l.ini||_pvAncora(p)):"")||"";
     if(ini) ini=toISO(_proxDiaUtil(parseISO(ini)));
     l.ini=ini;
-    l.fim=ini?_avancaDiasUteis(ini,l.slots):"";
+    if(l.fimManual && l.fim && ini && l.fim>=ini){
+      // término travado manualmente e coerente com o início → respeita a data e mede os slots reais
+      l.slots=_diasUteisEntre(ini,l.fim).length||1;
+    }else{
+      // automático: término = início + duração da atividade (pulando fim de semana/feriado)
+      if(l.fimManual && (!ini || (l.fim&&l.fim<ini))) l.fimManual=false; // manual ficou inválido p/ novo início
+      l.slots=durAtiv;
+      l.fim=ini?_avancaDiasUteis(ini,l.slots):"";
+    }
     if(l.fim) cursorFim=l.fim;
   });
 }
@@ -4030,13 +4043,14 @@ function _renderPrevLinhas(){
     if(l.ini&&(!inicio||l.ini<inicio))inicio=l.ini;
     const fimTxt=l.fim?`${fmtDM(parseISO(l.fim))}/${parseISO(l.fim).getFullYear()}`:"—";
     const autoCls=l.iniManual?"":"pvx-auto";
+    const autoFimCls=l.fimManual?"":"pvx-auto";
     return `<div class="pvx-row${flagged.has(idx)?" pvx-row-warn":""}">
       <div class="pvx-ord">${idx+1}</div>
       <div class="cr-an">${enc(l.an)}</div>
       <div>${enc(l.slot)}</div>
       <div>${enc(l.atv)}</div>
       <div class="${autoCls}"><input type="date" value="${enc(l.ini||'')}" data-idx="${idx}" class="pvx-ini" title="${l.iniManual?'Início manual (trava o encadeamento). Limpe para re-encadear.':'Início automático (encadeado). Preencha para travar.'}"></div>
-      <div class="pvx-term">${fimTxt}</div>
+      <div class="${autoFimCls}"><input type="date" value="${enc(l.fim||'')}" min="${enc(l.ini||'')}" data-idx="${idx}" class="pvx-fim" title="${l.fimManual?'Término manual (ajustado). Limpe para voltar à duração da atividade.':'Término automático (duração da atividade). Edite para ajustar os slots reais.'}"></div>
       <div>${l.slots||0}</div>
       <div class="pvx-move"><button class="pvx-up" data-idx="${idx}" title="Subir">↑</button><button class="pvx-dn" data-idx="${idx}" title="Descer">↓</button></div>
       <button class="pvx-del" data-idx="${idx}">Remover</button>
@@ -4047,6 +4061,7 @@ function _renderPrevLinhas(){
   host.querySelectorAll(".pvx-up").forEach(b=>b.addEventListener("click",()=>_pvMover(+b.dataset.idx,-1)));
   host.querySelectorAll(".pvx-dn").forEach(b=>b.addEventListener("click",()=>_pvMover(+b.dataset.idx,1)));
   host.querySelectorAll(".pvx-ini").forEach(inp=>inp.addEventListener("change",()=>_pvSetIni(+inp.dataset.idx,inp.value)));
+  host.querySelectorAll(".pvx-fim").forEach(inp=>inp.addEventListener("change",()=>_pvSetFim(+inp.dataset.idx,inp.value)));
   const aplicado=p&&p.previstoAplicadoEm;
   const statusHTML=aplicado?`<span class="pvx-status ok">Aplicado em ${enc(String(aplicado).slice(0,16).replace("T"," "))}</span>`:`<span class="pvx-status pend">Pendente de aplicação</span>`;
   const terminoTxt=termino?`${fmtDM(parseISO(termino))}/${parseISO(termino).getFullYear()}`:"—";
@@ -4178,6 +4193,22 @@ function _pvSetIni(idx,val){
   const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
   const l=p.previstoLinhas[idx]; if(!l)return;
   if(val){ l.ini=val; l.iniManual=true; } else { l.iniManual=false; }
+  if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
+  _pvRecalcChain(p); saveReg(); _renderPrevLinhas();
+}
+// Término manual: trava a data de término (ajuste livre). Vazio = volta à duração da atividade.
+// A data é normalizada para um dia útil (≤ a escolhida) e nunca antes do início da linha;
+// os SLOTS passam a refletir os dias úteis reais do intervalo (ini..fim).
+function _pvSetFim(idx,val){
+  const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
+  const l=p.previstoLinhas[idx]; if(!l)return;
+  if(val){
+    let f=_diaUtilOuAnterior(parseISO(val));
+    if(l.ini && toISO(f) < l.ini) f=_proxDiaUtil(parseISO(l.ini)); // não deixa término antes do início
+    l.fim=toISO(f); l.fimManual=true;
+  }else{
+    l.fimManual=false;   // re-deriva pela duração da atividade
+  }
   if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
   _pvRecalcChain(p); saveReg(); _renderPrevLinhas();
 }
