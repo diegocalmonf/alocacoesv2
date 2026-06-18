@@ -4978,9 +4978,28 @@ function mostrarSemAcesso(user){
   try{
     el("authScreen").classList.add("show");
     var sub = el("authSubtitle"), f = el("authFields");
-    if(sub) sub.innerHTML = "Você não tem acesso ao <b>NS ALOC</b>.<br>Solicite a liberação a um administrador no Portal.";
+    if(sub){
+      sub.innerHTML =
+        "Seu acesso ao <b>NS ALOC</b> não está liberado.<br>" +
+        "O controle de acesso agora é feito pelo <b>Portal de Implantação</b>. " +
+        "Solicite a liberação a um administrador.<br><br>" +
+        '<a href="https://portal-implantacao.vercel.app/" ' +
+        'style="display:inline-block;background:#ff3d00;color:#fff;font-weight:600;' +
+        'text-decoration:none;padding:12px 20px;border-radius:11px;margin-top:4px">' +
+        'Ir para o Portal &rarr;</a>' +
+        '<div style="margin-top:14px;font-size:.82rem;opacity:.7">' +
+        'Conectado como ' + ((user && user.email) || "—") +
+        ' &middot; <a href="#" id="coreLogoutLink" style="color:inherit;text-decoration:underline">sair</a></div>';
+    }
     if(f) f.style.display = "none";
     setUserLabel("");
+    // permite trocar de conta a partir da tela de bloqueio
+    var lo = el("coreLogoutLink");
+    if(lo) lo.addEventListener("click", function(ev){
+      ev.preventDefault();
+      try{ _auth.signOut().then(function(){ location.reload(); }); }
+      catch(e){ location.reload(); }
+    });
   }catch(e){ console.error(e); }
 }
 
