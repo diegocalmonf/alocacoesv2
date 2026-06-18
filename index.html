@@ -83,6 +83,7 @@
 
     <div class="sb-section">Planejamento</div>
     <button class="sb-link" data-nav="grade" title="Grade"><i data-lucide="layout-grid"></i>Grade</button>
+    <button class="sb-link" data-nav="cronograma" id="cronogramaBtn" title="Cronograma de Projetos"><i data-lucide="calendar-range"></i>Cronograma de Projetos</button>
     <button class="sb-link" id="incluirAlocBtn" title="Incluir alocação"><i data-lucide="plus-circle"></i>Incluir alocação</button>
 
     <div class="sb-section">Análise</div>
@@ -548,6 +549,16 @@
     </div>
     <div class="rep-filters" id="atasFiltros"></div>
     <div class="act-body" id="atasBody"></div>
+  </div>
+</div>
+
+<div class="overlay as-page" id="cronogramaOverlay">
+  <div class="modal big">
+    <div class="modal-h">
+      <div><div class="t"><i data-lucide="calendar-range"></i>Cronograma de Projetos</div><div class="s">Atividades previstas por projeto · consulta e ajuste</div></div>
+      <button class="x" id="cronogramaClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="act-body" id="cronogramaBody"></div>
   </div>
 </div>
 
