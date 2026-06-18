@@ -4790,39 +4790,12 @@ function removeUserAccess(uid){
 }
 
 /* ===================== AUTENTICAÇÃO ===================== */
-const NSCORE_PORTAL_URL = "https://portal-implantacao.vercel.app/";
-// Insere (uma vez) o convite para entrar pelo Portal, acima dos campos de login.
-function _injetarConvitePortal(){
-  if(document.getElementById("portalInviteBox")) return;
-  var f = el("authFields"); if(!f || !f.parentNode) return;
-  var box = document.createElement("div");
-  box.id = "portalInviteBox";
-  box.style.cssText = "margin-bottom:14px;text-align:center";
-  box.innerHTML =
-    '<a href="'+NSCORE_PORTAL_URL+'" style="display:block;background:#ff3d00;color:#fff;font-weight:600;'+
-    'text-decoration:none;padding:13px 18px;border-radius:11px">Entrar pelo Portal de Implantação &rarr;</a>'+
-    '<div style="margin-top:12px;display:flex;align-items:center;gap:10px;color:#8b8f99;font-size:.8rem">'+
-      '<span style="flex:1;height:1px;background:rgba(255,255,255,.12)"></span>'+
-      '<span>ou entre por aqui</span>'+
-      '<span style="flex:1;height:1px;background:rgba(255,255,255,.12)"></span>'+
-    '</div>';
-  f.parentNode.insertBefore(box, f);
-}
-function _togglePortalInvite(mostrar){
-  var b=document.getElementById("portalInviteBox");
-  if(b) b.style.display = mostrar ? "" : "none";
-}
 function showAuth(mode){
   const s=el("authScreen"); s.classList.add("show");
   const sub=el("authSubtitle"), f=el("authFields");
-  if(mode==="loading"){sub.textContent="Verificando acesso...";f.style.display="none";_togglePortalInvite(false);}
-  else if(mode==="config"){sub.textContent="Conexão com a nuvem ainda não configurada. Clique abaixo para configurar.";f.style.display="none";_togglePortalInvite(false);}
-  else{
-    sub.textContent="Acesse o ecossistema de implantação";
-    f.style.display="flex";
-    _injetarConvitePortal();
-    _togglePortalInvite(true);
-  }
+  if(mode==="loading"){sub.textContent="Verificando acesso...";f.style.display="none";}
+  else if(mode==="config"){sub.textContent="Conexão com a nuvem ainda não configurada. Clique abaixo para configurar.";f.style.display="none";}
+  else{sub.textContent="Entre com seu e-mail e senha";f.style.display="flex";}
 }
 function hideAuth(){el("authScreen").classList.remove("show");el("authError").textContent="";}
 function authErr(m){el("authError").textContent=m||"";}
@@ -4966,68 +4939,6 @@ function rejeitarVinculoPendente(uid){
   if(!_db){Object.assign(_usersCache[uid],update);renderUsers();return;}
   _db.ref(USERS_PATH+"/"+uid).update(update).then(()=>{Object.assign(_usersCache[uid],update);audit("user.pending-link.reject", u.email||uid, {pendingLink:u.pendingLink}, null);renderUsers();})
     .catch(err=>alert("Falha ao rejeitar: "+(err.message||err)));
-}
-
-/* ===== Integração com o CORE (controle de acesso central) =====
-   Robusta e fail-safe: admin/root sempre entram; em caso de erro de
-   leitura do CORE, LIBERA (não trava o sistema). Só bloqueia quando
-   tem certeza de que a pessoa NÃO tem acesso liberado. */
-const NSCORE_SYSTEM_ID  = "ns_alocacoes";
-const NSCORE_ROOT_EMAIL = "diego.rodrigues@nstech.com.br";
-
-function checarAcessoCore(user){
-  return new Promise(function(resolve){
-    // 1) sem usuário ou sem conexão: não trava (deixa o fluxo normal seguir)
-    if(!user || !_db){ resolve(true); return; }
-    // 2) admin-raiz: sempre entra
-    // reusa a função nativa do ALOC para reconhecer o admin-raiz
-    if(typeof isAdminEmail==="function" && isAdminEmail(user.email)){ resolve(true); return; }
-    if(user.email && user.email.toLowerCase() === NSCORE_ROOT_EMAIL){ resolve(true); return; }
-    var base = _db.ref("ns_core");
-    // 3) admin do CORE? entra em qualquer sistema
-    base.child("users/"+user.uid+"/role").once("value").then(function(rs){
-      if(rs.val() === "admin"){ resolve(true); return null; }
-      // 4) tem acesso liberado a este sistema?
-      return base.child("access/"+user.uid+"/"+NSCORE_SYSTEM_ID).once("value").then(function(as){
-        var node = as.val();
-        resolve(!!node && node.allowed !== false);
-      });
-    }).catch(function(err){
-      // 5) FAIL-SAFE: erro de leitura do CORE não pode derrubar o ALOC.
-      //    Libera e registra no console (não bloqueia por falha técnica).
-      console.warn("[CORE] leitura falhou, liberando por seguranca:", err && (err.code||err.message));
-      resolve(true);
-    });
-  });
-}
-
-function mostrarSemAcesso(user){
-  try{
-    el("authScreen").classList.add("show");
-    var sub = el("authSubtitle"), f = el("authFields");
-    if(sub){
-      sub.innerHTML =
-        "Seu acesso ao <b>NS ALOC</b> não está liberado.<br>" +
-        "O controle de acesso agora é feito pelo <b>Portal de Implantação</b>. " +
-        "Solicite a liberação a um administrador.<br><br>" +
-        '<a href="https://portal-implantacao.vercel.app/" ' +
-        'style="display:inline-block;background:#ff3d00;color:#fff;font-weight:600;' +
-        'text-decoration:none;padding:12px 20px;border-radius:11px;margin-top:4px">' +
-        'Ir para o Portal &rarr;</a>' +
-        '<div style="margin-top:14px;font-size:.82rem;opacity:.7">' +
-        'Conectado como ' + ((user && user.email) || "—") +
-        ' &middot; <a href="#" id="coreLogoutLink" style="color:inherit;text-decoration:underline">sair</a></div>';
-    }
-    if(f) f.style.display = "none";
-    setUserLabel("");
-    // permite trocar de conta a partir da tela de bloqueio
-    var lo = el("coreLogoutLink");
-    if(lo) lo.addEventListener("click", function(ev){
-      ev.preventDefault();
-      try{ _auth.signOut().then(function(){ location.reload(); }); }
-      catch(e){ location.reload(); }
-    });
-  }catch(e){ console.error(e); }
 }
 
 function registerAndLoadRole(user){
@@ -9373,18 +9284,9 @@ function bind(){
       _auth.onAuthStateChanged(user=>{
         _authFired=true; clearTimeout(_authSafeguard);
         if(user){
-          _currentUser=user; setUserLabel(user.email);
-          checarAcessoCore(user).then(function(podeEntrar){
-            if(!podeEntrar){ mostrarSemAcesso(user); return; }
-            hideAuth();
-            registerAndLoadRole(user).then(()=>startDataSync())
-              .catch(err=>console.warn("[Alocações] erro ao carregar perfil:",err));
-          }).catch(function(){
-            // se a própria checagem explodir, segue o fluxo normal (fail-safe)
-            hideAuth();
-            registerAndLoadRole(user).then(()=>startDataSync())
-              .catch(err=>console.warn("[Alocações] erro ao carregar perfil:",err));
-          });
+          _currentUser=user; setUserLabel(user.email); hideAuth();
+          registerAndLoadRole(user).then(()=>startDataSync())
+            .catch(err=>console.warn("[Alocações] erro ao carregar perfil:",err));
         }else{
           _syncStarted=false;_usersStarted=false;_initialLoadDone=false;_currentUser=null;_currentRole="leitura";_linkedAnalyst="";_linkedLider="";_linkedGp="";
           try{_db.ref(DB_PATH).off();_db.ref(USERS_PATH).off();}catch(e){}
