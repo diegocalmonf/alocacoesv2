@@ -212,7 +212,8 @@ function isGp(){return _currentRole==="gp";}
    ========================================================================= */
 const ACTIONS = [
   {id:"grade",      label:"Grade de alocação",    icon:"layout-grid",       desc:"Capacidade e alocação por período"},
-  {id:"prealoc",    label:"Pré-alocação (Previsto)", icon:"calendar-plus",  desc:"Aba Previsto do projeto · grava previsto + realizado"},
+  {id:"prealoc",    label:"Pré-alocação (Previsto)", icon:"calendar-plus",  desc:"Camada Previsto na grade · decoração e relatórios de aderência"},
+  {id:"cronograma", label:"Cronograma de Projetos", icon:"calendar-range",  desc:"Monta e consulta as atividades previstas por projeto"},
   {id:"esteira",    label:"Esteira de Projetos",  icon:"route",             desc:"Tabela e edição de etapas"},
   {id:"discovery",  label:"Esteira de Discovery", icon:"search",            desc:"Linha do tempo e ritos do Discovery"},
   {id:"torre",      label:"Torre de controle",    icon:"radar",             desc:"Painéis de Esteira + Discovery", readOnly:true},
@@ -233,6 +234,7 @@ const ACTION_LEVEL_LABELS = {none:"Sem acesso", read:"Somente leitura", edit:"Ed
 const ACTION_DEFAULTS = {
   grade:      {admin:"edit", gestor:"edit", lider:"read", gp:"read", analista:"read", leitura:"read"},
   prealoc:    {admin:"edit", gestor:"edit", lider:"read", gp:"read", analista:"none", leitura:"none"},
+  cronograma: {admin:"edit", gestor:"edit", lider:"read", gp:"read", analista:"none", leitura:"none"},
   esteira:    {admin:"edit", gestor:"edit", lider:"edit", gp:"edit", analista:"read", leitura:"read"},
   discovery:  {admin:"edit", gestor:"edit", lider:"read", gp:"read", analista:"read", leitura:"read"},
   torre:      {admin:"read", gestor:"read", lider:"read", gp:"read", analista:"read", leitura:"read"},
@@ -1486,7 +1488,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.67.0";
+const APP_VERSION = "1.68.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -2120,13 +2122,13 @@ function setActiveNav(t){
 }
 /* Telas-página são mutuamente exclusivas: abrir uma fecha as outras (uma por vez). */
 function _fecharOutrasTelas(exceto){
-  ["esteiraOverlay","discoveryOverlay","repOverlay","kpiOverlay","actOverlay","atasOverlay"].forEach(function(id){
+  ["esteiraOverlay","discoveryOverlay","repOverlay","kpiOverlay","actOverlay","atasOverlay","cronogramaOverlay"].forEach(function(id){
     if(id!==exceto){ try{ var o=el(id); if(o) o.classList.remove("open"); }catch(e){} }
   });
 }
 function irPara(t){
   const m = el("appMain"); if(!m) return;
-  if(!["home","grade","torre","esteira","discovery"].includes(t)) t = "home";
+  if(!["home","grade","torre","esteira","discovery","cronograma"].includes(t)) t = "home";
   // Guarda de permissão: telas que são "ações" exigem pelo menos leitura.
   // Bloqueia acesso direto (atalho, histórico, chamada por código) a quem não tem acesso.
   if(t!=="home" && !canViewAction(t)){
@@ -2134,13 +2136,14 @@ function irPara(t){
     t = "home";
   }
   // fecha as páginas-overlay sempre que navega
-  _fecharOutrasTelas(t==="esteira"?"esteiraOverlay":(t==="discovery"?"discoveryOverlay":null));
+  _fecharOutrasTelas(t==="esteira"?"esteiraOverlay":(t==="discovery"?"discoveryOverlay":(t==="cronograma"?"cronogramaOverlay":null)));
   m.dataset.screen = t; // 'esteira'/'discovery' deixam o appMain vazio atrás da página-overlay
   if(t === "grade"){ try{ ensureCapIntegration(); }catch(e){} }
   if(t === "home"){ try{ renderHome(); }catch(e){} }
   else if(t === "torre"){ try{ renderTorre(); }catch(e){} }
   else if(t === "esteira"){ try{ openEsteira(); }catch(e){ console.warn("[nav] esteira:",e); } }
   else if(t === "discovery"){ try{ openDiscovery(); }catch(e){ console.warn("[nav] discovery:",e); } }
+  else if(t === "cronograma"){ try{ openCronograma(); }catch(e){ console.warn("[nav] cronograma:",e); } }
   telaAtual = t;
   setActiveNav(t);
   try{ window.scrollTo(0,0); }catch(e){}
@@ -2751,6 +2754,7 @@ function renderHome(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
   const cards = [
     {action:"torre",      act:"irPara('torre')",            ic:"radar",            t:"Torre de controle",          d:"Esteira + Discovery num só painel",        m: nP+" projetos"},
     {action:"grade",      act:"irPara('grade')",            ic:"layout-grid",      t:"Grade de alocação",          d:"Capacidade e alocação por período",        m: nA+" analistas"},
+    {action:"cronograma", act:"irPara('cronograma')",       ic:"calendar-range",   t:"Cronograma de projetos",     d:"Atividades previstas por projeto",         m:"abrir"},
     {action:"esteira",    act:"irPara('esteira')",          ic:"route",            t:"Esteira de projetos",        d:"Tabela e edição de etapas",                m:"abrir"},
     {action:"discovery",  act:"irPara('discovery')",        ic:"search",           t:"Linha do tempo · Discovery", d:"Tabela e edição dos ritos",                m:"abrir"},
     {action:"relatorios", act:"el('reportsBtn').click()",   ic:"file-bar-chart-2", t:"Relatórios",                 d:"Alocação, squads, go-lives, mapa",         m:"abrir"},
@@ -4052,7 +4056,7 @@ function _renderPrevLinhas(){
     <div style="display:flex;gap:10px;align-items:center">${statusHTML}<button class="btn primary" id="pvAplicar"><i data-lucide="check-check"></i> Aplicar alocações previstas</button></div>
   </div>${overlaps.length?`<div class="pv-warn" style="display:flex;margin-top:10px"><i data-lucide="alert-triangle"></i> ${overlaps.length} sobreposição(ões): mesmo analista/slot com datas que se cruzam.</div>`:""}`;
   const apBtn=el("pvAplicar"); if(apBtn)apBtn.addEventListener("click",()=>_pvAplicar(_pvProj));
-  if(!canEditAction("prealoc")){ host.querySelectorAll("input,button").forEach(e=>e.disabled=true); const ap=el("pvAplicar"); if(ap)ap.disabled=true; }
+  if(!canEditAction("cronograma")){ host.querySelectorAll("input,button").forEach(e=>e.disabled=true); const ap=el("pvAplicar"); if(ap)ap.disabled=true; }
   lucideRefresh();
 }
 
@@ -4126,40 +4130,20 @@ function _bindContatoTab(p){
   });
 }
 
-function _bindPrevistoTab(p, isNew){
-  _pvProj=p;
-  if(!Array.isArray(p.previstoLinhas)) p.previstoLinhas=[];
-  _prevTabLinhas=p.previstoLinhas;
-  const tabDados=el("projSubtabDados"), tabPrev=el("projSubtabPrev"), tabCont=el("projSubtabContato");
-  const paneD=el("projPaneDados"), paneP=el("projPanePrev"), paneC=el("projPaneContato");
-  function showTab(which){ // "dados" | "prev" | "contato"
-    const isPrev=which==="prev", isCont=which==="contato", isDados=!isPrev&&!isCont;
+// Sub-abas do cadastro do projeto: agora só Dados ↔ Contato.
+// A edição do Previsto saiu daqui e virou a tela "Cronograma de Projetos".
+function _bindProjSubtabs(p){
+  const tabDados=el("projSubtabDados"), tabCont=el("projSubtabContato");
+  const paneD=el("projPaneDados"), paneC=el("projPaneContato");
+  function showTab(which){ // "dados" | "contato"
+    const isCont=which==="contato", isDados=!isCont;
     if(paneD)paneD.style.display=isDados?"":"none";
-    if(paneP)paneP.style.display=isPrev?"":"none";
     if(paneC)paneC.style.display=isCont?"":"none";
     if(tabDados)tabDados.classList.toggle("on",isDados);
-    if(tabPrev)tabPrev.classList.toggle("on",isPrev);
     if(tabCont)tabCont.classList.toggle("on",isCont);
-    const f=el("actBody").querySelector(".modal-f"); if(f) f.style.display=isPrev?"none":"";  // rodapé Salvar vale p/ Dados e Contato, não p/ Previsto
-    if(isPrev){
-      const podeEditar=canEditAction("prealoc");
-      ["pvAn","pvSlot","pvAtv","pvIni","pvAdd"].forEach(id=>{ const e=el(id); if(e) e.disabled=!podeEditar; });
-    }
   }
   if(tabDados)tabDados.addEventListener("click",()=>showTab("dados"));
-  if(tabPrev)tabPrev.addEventListener("click",()=>{ showTab("prev"); _renderPrevLinhas(); lucideRefresh(); });
   if(tabCont)tabCont.addEventListener("click",()=>{ showTab("contato"); lucideRefresh(); });
-  const add=el("pvAdd");
-  if(add)add.addEventListener("click",()=>{
-    if(!canEditAction("prealoc")){ alert("Você não tem permissão de edição na Pré-alocação."); return; }
-    if(!p.nome){ alert("Salve o projeto antes de declarar o previsto."); return; }
-    const anEl=el("pvAn"); const an=anEl?anEl.value:"";
-    const slot=el("pvSlot").value, atv=el("pvAtv").value, ini=el("pvIni").value;
-    if(!an){alert("Este projeto não tem analistas vinculados. Vincule na aba “Dados do projeto”.");return;}
-    if(!atv){alert("Selecione uma atividade.");return;}
-    _pvAddLinha(p,{an,slot,atv,ini});
-  });
-  _renderPrevLinhas();
 }
 
 // Adiciona uma atividade à sequência (STAGING). NÃO grava na grade — só "Aplicar" grava.
@@ -4177,13 +4161,13 @@ function _pvAddLinha(p,dados){
 // Remove a atividade da sequência (STAGING). Reaplique para refletir na grade.
 function _pvRemoverLinha(idx){
   const p=_pvProj; if(!p||!Array.isArray(p.previstoLinhas))return;
-  if(!canEditAction("prealoc")){ alert("Você não tem permissão de edição na Pré-alocação."); return; }
+  if(!canEditAction("cronograma")){ alert("Você não tem permissão de edição no Cronograma de Projetos."); return; }
   p.previstoLinhas.splice(idx,1);
   if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
   _pvRecalcChain(p); saveReg(); _renderPrevLinhas();
 }
 function _pvMover(idx,dir){
-  const p=_pvProj; if(!p||!canEditAction("prealoc"))return;
+  const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
   const L=p.previstoLinhas, j=idx+dir;
   if(j<0||j>=L.length)return;
   const t=L[idx]; L[idx]=L[j]; L[j]=t;
@@ -4191,7 +4175,7 @@ function _pvMover(idx,dir){
   _pvRecalcChain(p); saveReg(); _renderPrevLinhas();
 }
 function _pvSetIni(idx,val){
-  const p=_pvProj; if(!p||!canEditAction("prealoc"))return;
+  const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
   const l=p.previstoLinhas[idx]; if(!l)return;
   if(val){ l.ini=val; l.iniManual=true; } else { l.iniManual=false; }
   if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
@@ -4204,7 +4188,7 @@ function _pvRenderWarn(p){ const warn=el("pvWarn"); if(!warn)return; const o=_pr
 // manual e de outros projetos é preservado; realizado editado à mão é preservado.
 function _pvAplicar(p){
   if(!p){ p=_pvProj; }
-  if(!canEditAction("prealoc")){ alert("Você não tem permissão de edição na Pré-alocação."); return; }
+  if(!canEditAction("cronograma")){ alert("Você não tem permissão de edição no Cronograma de Projetos."); return; }
   if(!p||!p.nome){ alert("Salve o projeto antes de aplicar o previsto."); return; }
   _garantirHistoricoTudo().then(()=>{
     _pvRecalcChain(p);
@@ -4247,6 +4231,63 @@ function _pvAplicar(p){
   });
 }
 
+/* ===================== CRONOGRAMA DE PROJETOS (tela dedicada · Fase 1) =====================
+   Reaproveita o MESMO motor da antiga aba Previsto: a sequência de atividades continua em
+   p.previstoLinhas (gravada no projeto via saveReg) e o botão "Aplicar alocações previstas"
+   chama _pvAplicar — nada muda na persistência nem na grade. Aqui só muda ONDE se opera:
+   uma tela própria com seletor de projeto no topo e a sequência editável abaixo.
+   Gating de edição: ação "cronograma" (a visualização do previsto na grade segue em "prealoc"). */
+let _cronProjNome="";
+function _cronProjetos(){ return (REG.projetos||[]).filter(p=>p&&p.nome).slice().sort(byNome); }
+function openCronograma(){
+  if(!canViewAction("cronograma")){ alert("Você não tem acesso ao Cronograma de Projetos."); irPara("home"); return; }
+  _fecharOutrasTelas("cronogramaOverlay");
+  const o=el("cronogramaOverlay"); if(o)o.classList.add("open");
+  renderCronograma();
+}
+function closeCronograma(){ const o=el("cronogramaOverlay"); const was=o&&o.classList.contains("open"); if(o)o.classList.remove("open"); if(was) irPara("home"); }
+function renderCronograma(){
+  const host=el("cronogramaBody"); if(!host)return;
+  if(!canViewAction("cronograma")){ host.innerHTML=`<div class="rep-empty" style="padding:30px">Você não tem acesso ao Cronograma de Projetos.</div>`; return; }
+  const projs=_cronProjetos();
+  if(_cronProjNome && !projs.some(p=>p.nome===_cronProjNome)) _cronProjNome="";   // seleção saiu da base
+  const opts=`<option value="">— selecione um projeto —</option>`+projs.map(p=>{
+    const st=p.previstoAplicadoEm?"●":"○";
+    return `<option value="${enc(p.nome)}" ${p.nome===_cronProjNome?"selected":""}>${st} ${enc(p.nome)}</option>`;
+  }).join("");
+  const p=_cronProjNome?projs.find(x=>x.nome===_cronProjNome):null;
+  host.innerHTML=`
+    <div class="pv-proto-banner"><i data-lucide="calendar-range"></i> Selecione um projeto para montar ou ajustar o seu cronograma de atividades previstas. Cada atividade puxa a duração (<b>slots necessários</b>) do cadastro e encadeia pulando fim de semana e feriado. <b>Nada vai pra grade</b> até clicar em <b>Aplicar alocações previstas</b>.</div>
+    <div class="cron-pick">
+      <div class="f"><label>Projeto</label><select id="cronProjSel">${opts}</select></div>
+      <div class="cron-legenda">● cronograma aplicado · ○ pendente de aplicação</div>
+    </div>
+    <div id="cronCorpo">${p?_previstoTabHTML(p):`<div class="hint" style="padding:16px">Escolha um projeto acima para ver e editar o cronograma.</div>`}</div>`;
+  const sel=el("cronProjSel");
+  if(sel)sel.addEventListener("change",()=>{ _cronProjNome=sel.value||""; renderCronograma(); });
+  if(p) _bindCronograma(p);
+  lucideRefresh();
+}
+// Wiring do corpo (formulário de inclusão + tabela) para o projeto selecionado.
+function _bindCronograma(p){
+  _pvProj=p;
+  if(!Array.isArray(p.previstoLinhas)) p.previstoLinhas=[];
+  _prevTabLinhas=p.previstoLinhas;
+  const podeEditar=canEditAction("cronograma");
+  ["pvAn","pvSlot","pvAtv","pvIni","pvAdd"].forEach(id=>{ const e=el(id); if(e) e.disabled=!podeEditar; });
+  const add=el("pvAdd");
+  if(add)add.addEventListener("click",()=>{
+    if(!canEditAction("cronograma")){ alert("Você não tem permissão de edição no Cronograma de Projetos."); return; }
+    if(!p.nome){ alert("Projeto inválido."); return; }
+    const anEl=el("pvAn"); const an=anEl?anEl.value:"";
+    const slot=el("pvSlot").value, atv=el("pvAtv").value, ini=el("pvIni").value;
+    if(!an){alert("Este projeto não tem analistas vinculados. Vincule na aba “Dados do projeto”.");return;}
+    if(!atv){alert("Selecione uma atividade.");return;}
+    _pvAddLinha(p,{an,slot,atv,ini});
+  });
+  _renderPrevLinhas();
+}
+
 function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
   const b=el("actBody"), isNew=!!actEditing.__new;
   if(actTab==="projetos"){
@@ -4255,7 +4296,6 @@ function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
     b.innerHTML=`<div class="crumb"><button id="back">‹ Projetos</button>/ ${isNew?'Novo':enc(p.nome)}</div>
       <div class="proj-subtabs">
         <button class="proj-subtab on" id="projSubtabDados"><i data-lucide="folder"></i> Dados do projeto</button>
-        ${canViewAction("prealoc")?`<button class="proj-subtab" id="projSubtabPrev"><i data-lucide="calendar-clock"></i> Previsto</button>`:""}
         <button class="proj-subtab" id="projSubtabContato"><i data-lucide="contact"></i> Contato Cliente</button>
       </div>
       <div id="projPaneDados">
@@ -4293,9 +4333,8 @@ function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
           <div class="hint">O <b>tipo do projeto</b> limita quais atividades podem ser lançadas nele. O <b>bloco Go-Live</b> alimenta os relatórios de Gestão e Controle de Go-Lives (datas, situação, modalidade).</div>
         </div>
       </div></div>
-      <div id="projPanePrev" style="display:none">${_previstoTabHTML(p)}</div>
       <div id="projPaneContato" style="display:none">${_contatosTabHTML(p)}</div>`;
-    _bindPrevistoTab(p, isNew);
+    _bindProjSubtabs(p);
     _bindContatoTab(p);
     bindFormFooter(()=>{
       const nome=el("f_nome").value.trim();if(!nome)return;
@@ -5159,6 +5198,7 @@ function applyRoleToUI(){
 function applyActionMenuVisibility(){
   const map = [
     {sel:'.sb-link[data-nav="grade"]',     action:"grade"},
+    {sel:'.sb-link[data-nav="cronograma"]',action:"cronograma"},
     {sel:'.sb-link[data-nav="torre"]',     action:"torre"},
     {sel:'#esteiraBtn',                    action:"esteira"},
     {sel:'#discoveryBtn',                  action:"discovery"},
@@ -9182,6 +9222,9 @@ function bind(){
   { const ac=el("atasClose"); if(ac) ac.addEventListener("click",closeAtasReport); }
   { const aa=el("atasAplicar"); if(aa) aa.addEventListener("click",aplicarPeriodoAtas); }
   { const ao2=el("atasOverlay");if(ao2) ao2.addEventListener("click",e=>{if(e.target.id==="atasOverlay")closeAtasReport();}); }
+  // Cronograma de Projetos
+  { const cc=el("cronogramaClose"); if(cc) cc.addEventListener("click",closeCronograma); }
+  { const co=el("cronogramaOverlay"); if(co) co.addEventListener("click",e=>{if(e.target.id==="cronogramaOverlay")closeCronograma();}); }
   // Modal de Incluir Alocação
   el("incluirAlocBtn").addEventListener("click",()=>openIncluirAloc({}));
   el("incClose").addEventListener("click",closeIncluirAloc);
