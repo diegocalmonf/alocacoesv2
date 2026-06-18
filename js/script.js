@@ -734,6 +734,7 @@ function _dualWriteBuckets(){
 let ALLOC_WINDOWED_READ = true;
 let _histCompleto = true;          // sem janela, DATA já é o histórico completo
 const _janelaListeners = {};       // "YYYY-MM" -> ref Firebase (para desanexar)
+const _mesesCarregados = new Set(); // "YYYY-MM" cujo bucket já completou o .once nesta sessão (guarda contra escrita parcial)
 // Meses (YYYY-MM) cobertos pelo período visível atual.
 function mesesVisiveis(){
   const ms=new Set();
@@ -1063,6 +1064,12 @@ function _writeWindowBuckets(){
   const byMonth=_allocPorMes();
   const updates={};
   Object.keys(byMonth).forEach(m=>{
+    // BLINDAGEM (v1.66.1): nunca regravar um mês cujo bucket ainda não foi
+    // confirmado como carregado nesta sessão. Sem isso, um persist()/saveReg()
+    // disparado na fresta da carga (ou a partir de um DATA parcial vindo do
+    // localStorage) sobrescrevia o bucket cheio com dados parciais — foi a causa
+    // do sumiço das alocações do mês visível.
+    if(!_mesesCarregados.has(m)) return;
     const js=JSON.stringify(byMonth[m]);
     if(_lastBucketJSON[m]!==js){ updates[m]=byMonth[m]; _lastBucketJSON[m]=js; }
   });
@@ -1083,6 +1090,7 @@ function _carregarJanela(meses){
     if(!alvo.has(m)){
       try{ _janelaListeners[m].off(); }catch(e){}
       delete _janelaListeners[m];
+      _mesesCarregados.delete(m); // saiu da janela: exige reconfirmação do .once antes de poder regravar
       if(podarFora){ Object.keys(DATA).forEach(k=>{ if(mesDe(k)===m) delete DATA[k]; }); }
     }
   });
@@ -1095,6 +1103,7 @@ function _carregarJanela(meses){
       const v = s.val();
       if(v && !Array.isArray(v)) Object.assign(DATA, v);
       else if(v && Array.isArray(v)) Object.assign(DATA, arrayToAlloc(v));
+      _mesesCarregados.add(m); // bucket confirmado (mesmo vazio): a partir daqui é seguro regravar este mês
       try{ if(typeof telaAtual!=="undefined" && telaAtual==="grade" && typeof renderAll==="function") renderAll(); }catch(e){}
       
       ref.on("child_added", child => { DATA[child.key] = child.val(); });
@@ -1447,7 +1456,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.66.0";
+const APP_VERSION = "1.66.1";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
