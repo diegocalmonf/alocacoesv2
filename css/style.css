@@ -293,7 +293,7 @@ td.cell.locked,td.gcell.locked{cursor:not-allowed}
 .pvx-incl-grid{display:grid;grid-template-columns:1.3fr .8fr 1.7fr 1.1fr auto;gap:10px;align-items:end}
 .pvx-incl-grid .f{margin-bottom:0}
 .pvx-prev{margin-top:10px;font-size:12px;color:#777}
-.pvx-head,.pvx-row{display:grid;grid-template-columns:30px 1.1fr .65fr 1.5fr 1.2fr 1.05fr .55fr 62px 80px;gap:8px;align-items:center}
+.pvx-head,.pvx-row{display:grid;grid-template-columns:30px 1.1fr .65fr 1.5fr 1.2fr 1.2fr .55fr 62px 80px;gap:8px;align-items:center}
 .pvx-head{font-size:10.5px;font-weight:600;color:#999;text-transform:uppercase;letter-spacing:.04em;padding:0 12px 4px}
 .ct-head,.ct-row{display:grid;grid-template-columns:1.2fr 1.6fr 1.2fr .9fr 52px 44px;gap:8px;align-items:center}
 .ct-head{font-size:10.5px;font-weight:600;color:#999;text-transform:uppercase;letter-spacing:.04em;padding:0 4px 4px}
