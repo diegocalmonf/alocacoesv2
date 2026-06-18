@@ -326,6 +326,12 @@ function canEditAlloc(nome,iso){
   if(ehVisaoGeral())return false;
   // Permissão por ação: sem nível de edição na Grade, ninguém altera slots.
   if(!canEditAction("grade"))return false;
+  // Consulta retroativa (v1.67.0): períodos anteriores ao dia atual são SOMENTE
+  // LEITURA — a navegação para o passado existe para CONSULTA. Apenas admin/gestor
+  // podem corrigir o histórico. A trava fica aqui (camada de escrita), não na UI:
+  // o modal de consulta (openAlloc) segue abrindo para todos; o que some é o botão
+  // "Alterar/Sobrescrever" e as operações em lote (que filtram por canEditAlloc).
+  if(iso && iso < toISO(new Date()) && !(isAdmin()||isGestor())) return false;
   // bloqueio por desligamento: não permite alocar em datas a partir do desligamento
   const a=analistaObj(nome);
   if(a && a.ativo===false){
@@ -735,6 +741,30 @@ let ALLOC_WINDOWED_READ = true;
 let _histCompleto = true;          // sem janela, DATA já é o histórico completo
 const _janelaListeners = {};       // "YYYY-MM" -> ref Firebase (para desanexar)
 const _mesesCarregados = new Set(); // "YYYY-MM" cujo bucket já completou o .once nesta sessão (guarda contra escrita parcial)
+// Consulta retroativa (v1.67.0): mês do bucket mais antigo em alocacoes/data.
+// É o PISO da navegação para trás (recuar até o início dos dados). null = ainda
+// não descoberto (ou sem buckets) → o piso recai no mês atual (sem recuo), seguro.
+let _primeiroBucketMes = null;
+function _descobrirPrimeiroBucket(){
+  if(!_db) return Promise.resolve(null);
+  // Leitura barata: só a primeira chave (mês mais antigo), sem baixar buckets.
+  return _db.ref(ALLOC_DATA_PATH).orderByKey().limitToFirst(1).once("value")
+    .then(s=>{
+      let m=null; s.forEach(ch=>{ m=ch.key; return true; });
+      _primeiroBucketMes = (m && /^\d{4}-\d{2}$/.test(m)) ? m : null;
+      try{ if(typeof telaAtual!=="undefined" && telaAtual==="grade" && typeof renderControls==="function") renderControls(); }catch(e){}
+      return _primeiroBucketMes;
+    })
+    .catch(e=>{ console.warn("[janela] primeiro bucket:", e); return null; });
+}
+// Piso da navegação retroativa, normalizado em Date/ISO/ano/mês.
+function _pisoRetroData(){
+  let mes=_primeiroBucketMes;
+  if(!mes){ const h=new Date(); mes=`${h.getFullYear()}-${String(h.getMonth()+1).padStart(2,"0")}`; }
+  const y=+mes.slice(0,4), m=+mes.slice(5,7)-1;
+  const d=new Date(y,m,1,12,0,0);
+  return { y, m, date:d, iso:toISO(d), mon:monday(d) };
+}
 // Meses (YYYY-MM) cobertos pelo período visível atual.
 function mesesVisiveis(){
   const ms=new Set();
@@ -1206,9 +1236,10 @@ function periodWorkDays(){ // só úteis (seg-sex), usado em métricas
   return periodDays().filter(d=>{const w=d.getDay();return w>=1&&w<=5;});
 }
 function shiftPeriod(dir){
-  // Regra de negócio: a GRADE é de planejamento — não navega para o passado.
-  // O piso é o período atual (hoje / semana de hoje / mês de hoje).
-  if(dir<0 && estaNoPisoOuAntes(dir)) return; // bloqueia ir para trás além do atual
+  // Consulta retroativa (v1.67.0): a GRADE permite recuar para CONSULTAR o passado
+  // até o início dos dados (1º bucket). A edição do passado é gateada em canEditAlloc
+  // (só admin/gestor). O piso de navegação deixou de ser "hoje" e passou a ser o 1º bucket.
+  if(dir<0 && estaNoPisoOuAntes(dir)) return; // bloqueia ir antes do início dos dados
   if(period==="dia"){
     refDate=addDays(refDate,dir);
     // pula sábado/domingo: avança para próxima segunda (ou recua para sexta anterior)
@@ -1217,34 +1248,33 @@ function shiftPeriod(dir){
   else if(period==="semana"){weekStart=addDays(weekStart,dir*7);refDate=new Date(weekStart);}
   else {refDate=new Date(refDate.getFullYear(),refDate.getMonth()+dir,1,12,0,0);}
 }
-// true se, ao recuar (dir<0), o período resultante cairia ANTES do período atual
+// true se, ao recuar (dir<0), o período resultante cairia ANTES do início dos dados (1º bucket)
 function estaNoPisoOuAntes(dir){
-  const hoje=new Date();
+  const piso=_pisoRetroData();
   if(period==="dia"){
     const alvo=addDays(refDate,dir);
-    return toISO(alvo) < toISO(hoje);                 // compara só a DATA (sem hora)
+    return toISO(alvo) < piso.iso;                          // compara só a DATA (sem hora)
   }
   if(period==="semana"){
     const alvoWs=addDays(weekStart,dir*7);
-    return toISO(monday(alvoWs)) < toISO(monday(hoje)); // compara só a DATA (sem hora)
+    return toISO(monday(alvoWs)) < toISO(piso.mon);         // compara as segundas-feiras
   }
   // mês
   const alvoM=new Date(refDate.getFullYear(),refDate.getMonth()+dir,1);
-  const mesAtual=new Date(hoje.getFullYear(),hoje.getMonth(),1);
-  return alvoM < mesAtual;
+  const pisoM=new Date(piso.y,piso.m,1);
+  return alvoM < pisoM;
 }
-// true se já estamos NO período atual (para desabilitar visualmente a seta "‹")
+// true se já estamos NO piso (1º bucket) ou antes (para desabilitar visualmente a seta "‹")
 function noPisoAtual(){
-  const hoje=new Date();
+  const piso=_pisoRetroData();
   if(period==="dia"){
-    return toISO(refDate) <= toISO(hoje);             // compara só a DATA
+    return toISO(refDate) <= piso.iso;                      // compara só a DATA
   }
   if(period==="semana"){
-    // usa weekStart (semana exibida), igual ao bloqueio em estaNoPisoOuAntes
-    return toISO(monday(weekStart)) <= toISO(monday(hoje));
+    return toISO(monday(weekStart)) <= toISO(piso.mon);
   }
-  return (refDate.getFullYear()<hoje.getFullYear()) ||
-         (refDate.getFullYear()===hoje.getFullYear() && refDate.getMonth()<=hoje.getMonth());
+  return (refDate.getFullYear()<piso.y) ||
+         (refDate.getFullYear()===piso.y && refDate.getMonth()<=piso.m);
 }
 // true se o período atualmente exibido CONTÉM o dia de hoje
 function ehPeriodoAtual(){
@@ -1456,7 +1486,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.66.1";
+const APP_VERSION = "1.67.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -1778,7 +1808,7 @@ function renderControls(){
     prev.disabled=noPiso;
     prev.style.opacity=noPiso?".3":"";
     prev.style.cursor=noPiso?"not-allowed":"";
-    prev.title=noPiso?"Planejamento é do período atual em diante (o passado fica no histórico)":"Anterior";
+    prev.title=noPiso?"Início dos dados — não há período anterior para consultar":"Anterior";
   }
 }
 function renderHeader(){
@@ -5217,6 +5247,7 @@ function _startWindowedRegSync(){
   }, err=>{ console.warn("Sem nuvem (reg):",err); setSyncBadge("offline"); });
   _histCompleto=false;            // a partir daqui DATA é parcial (só a janela), até alguém pedir histórico completo
   _carregarJanela(mesesVisiveis());
+  _descobrirPrimeiroBucket();      // piso da consulta retroativa (recuar até o 1º bucket)
 }
 
 /* ===================== CONEXÃO (modal ⚙) ===================== */
