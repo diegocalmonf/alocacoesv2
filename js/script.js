@@ -4790,12 +4790,39 @@ function removeUserAccess(uid){
 }
 
 /* ===================== AUTENTICAÇÃO ===================== */
+const NSCORE_PORTAL_URL = "https://portal-implantacao.vercel.app/";
+// Insere (uma vez) o convite para entrar pelo Portal, acima dos campos de login.
+function _injetarConvitePortal(){
+  if(document.getElementById("portalInviteBox")) return;
+  var f = el("authFields"); if(!f || !f.parentNode) return;
+  var box = document.createElement("div");
+  box.id = "portalInviteBox";
+  box.style.cssText = "margin-bottom:14px;text-align:center";
+  box.innerHTML =
+    '<a href="'+NSCORE_PORTAL_URL+'" style="display:block;background:#ff3d00;color:#fff;font-weight:600;'+
+    'text-decoration:none;padding:13px 18px;border-radius:11px">Entrar pelo Portal de Implantação &rarr;</a>'+
+    '<div style="margin-top:12px;display:flex;align-items:center;gap:10px;color:#8b8f99;font-size:.8rem">'+
+      '<span style="flex:1;height:1px;background:rgba(255,255,255,.12)"></span>'+
+      '<span>ou entre por aqui</span>'+
+      '<span style="flex:1;height:1px;background:rgba(255,255,255,.12)"></span>'+
+    '</div>';
+  f.parentNode.insertBefore(box, f);
+}
+function _togglePortalInvite(mostrar){
+  var b=document.getElementById("portalInviteBox");
+  if(b) b.style.display = mostrar ? "" : "none";
+}
 function showAuth(mode){
   const s=el("authScreen"); s.classList.add("show");
   const sub=el("authSubtitle"), f=el("authFields");
-  if(mode==="loading"){sub.textContent="Verificando acesso...";f.style.display="none";}
-  else if(mode==="config"){sub.textContent="Conexão com a nuvem ainda não configurada. Clique abaixo para configurar.";f.style.display="none";}
-  else{sub.textContent="Entre com seu e-mail e senha";f.style.display="flex";}
+  if(mode==="loading"){sub.textContent="Verificando acesso...";f.style.display="none";_togglePortalInvite(false);}
+  else if(mode==="config"){sub.textContent="Conexão com a nuvem ainda não configurada. Clique abaixo para configurar.";f.style.display="none";_togglePortalInvite(false);}
+  else{
+    sub.textContent="Acesse o ecossistema de implantação";
+    f.style.display="flex";
+    _injetarConvitePortal();
+    _togglePortalInvite(true);
+  }
 }
 function hideAuth(){el("authScreen").classList.remove("show");el("authError").textContent="";}
 function authErr(m){el("authError").textContent=m||"";}
