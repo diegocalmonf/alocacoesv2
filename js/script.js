@@ -111,7 +111,7 @@ function colorFor(s){let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))
 /* ===================== estado ===================== */
 const ALLOC_KEY="alocacoes:v1", REG_KEY="alocacoes:cadastros:v1", CFG_KEY="alocacoesFirebaseConfig";
 let DATA={};                                  // chave -> {atividade, cliente}
-let REG={lideres:[],analistas:[],projetos:[],feriados:[],gps:[],lideresInativos:{},gpsInativos:{},lideresEmails:{},gpsEmails:{},atividades:[]};// fonte única de cadastros
+let REG={lideres:[],analistas:[],projetos:[],feriados:[],gps:[],lideresInativos:{},gpsInativos:{},lideresEmails:{},gpsEmails:{},atividades:[],tarefas:[]};// fonte única de cadastros
 let consultor=null, weekStart=null, editing=null;
 let viewMode="analista";   // "analista" | "geral"
 let period="semana";       // "dia" | "semana" | "mes"
@@ -1294,6 +1294,13 @@ function periodLabel(){
 /* ===================== categoria → cor ===================== */
 // Resolve a atividade cadastrada pelo nome (se existir)
 function atividadeObj(nome){return (REG.atividades||[]).find(a=>a.nome===nome)||null;}
+// ===== Tarefas (Fase 1 · nível abaixo da atividade) =====
+// Tarefa pertence a uma atividade pelo NOME (vínculo). Modelo: {nome, atividade, ativo, ...auditoria}.
+// São DESCRITIVAS: no cronograma aparecem como sub-itens (N.1, N.2) sob a linha da atividade,
+// sem duração nem datas próprias — a atividade segue dona do encadeamento.
+function tarefasDaAtividade(atvNome){return (REG.tarefas||[]).filter(t=>t&&t.atividade===atvNome&&t.ativo!==false);}
+// Inclui inativas (usado no cadastro): preserva a ordem de inserção (numeração estável).
+function tarefasTodasDaAtividade(atvNome){return (REG.tarefas||[]).filter(t=>t&&t.atividade===atvNome);}
 function atividadesAtivas(){return (REG.atividades||[]).filter(a=>a.ativo!==false).slice().sort(byNome);}
 function atividadesAtivasPorTipo(tipo){return atividadesAtivas().filter(a=>a.tipo===tipo).sort(byNome);}
 
@@ -1419,6 +1426,21 @@ function seedReg(){
   ];
   REG.gps=["EDUARDO SABATINO","GIOVANNI DENARDI","DEIVID FIORIN","WELLEN SANTOS","MARCOS PESSOTTO","WELINGTON SCHIMITZ"];
   REG.atividades=seedAtividades();
+  REG.tarefas=seedTarefas();
+}
+// Cadastro semente de tarefas (exemplos · nível abaixo da atividade). Cada tarefa referencia
+// o NOME de uma atividade existente na seedAtividades(). Só roda em instalação sem dados.
+function seedTarefas(){
+  const hoje=new Date().toISOString();
+  const mk=(nome,atividade)=>({nome,atividade,ativo:true,createdAt:hoje,createdBy:"sistema",updatedAt:hoje,updatedBy:"sistema"});
+  return [
+    mk("Permissões e usuários","Treinamento de cadastros"),
+    mk("Cadastro de produtos","Treinamento de cadastros"),
+    mk("Cadastro de clientes","Treinamento de cadastros"),
+    mk("Roteirização","Treinamento logístico"),
+    mk("Conferência de carga","Treinamento logístico"),
+    mk("Validação de integrações","Validação de ambiente"),
+  ];
 }
 // Cadastro semente de atividades (exemplos do prompt, todas ativas)
 function seedAtividades(){
@@ -1488,7 +1510,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.69.0";
+const APP_VERSION = "1.73.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -2828,11 +2850,14 @@ function openAlloc(nomeOuIso,isoOuSlot,slotOuUndef){
     const obsAud=(r.obsBy||r.obsAt)?`<div class="hint" style="margin-top:6px;font-size:11px">Última alteração da observação por <b>${enc(r.obsBy||"—")}</b> em ${enc((r.obsAt||"").replace("T"," ").slice(0,16))}</div>`:"";
     const pend=r.obsPendente?`<div style="background:#f6ecd6;border:1px solid #e6d2a6;color:#b07a1e;padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:8px"><b>⚠ Observação pendente</b> — atividade exige observação, ainda sem texto.</div>`:"";
     const fer=r.feriado?`<div style="background:var(--aus-bg);border:1px solid var(--aus-bd);color:#4a4a4a;padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:8px">🌴 Slot criado pela <b>propagação automática de feriado</b>.</div>`:"";
+    const tprev=_tarefasPrevistasNoSlot(cli, nome, slot, iso);   // tarefas do dia (derivado do cronograma · só na consulta)
+    const tarefasHTML=tprev.length?`<div class="cs-it cs-full"><div class="cs-l">Tarefas previstas neste dia</div><div class="cs-v cs-tarefas">${tprev.map(x=>`<span class="cs-tar">${enc(x)}</span>`).join("")}</div></div>`:"";
     body.innerHTML=`${fer}${pend}
       <div class="cs-grid">
         <div class="cs-it"><div class="cs-l">Atividade</div><div class="cs-v"><b>${enc(r.atividade||"—")}</b>${tipo!=="—"?` <span class="badge-small" style="background:#fff;border:1px solid var(--line2)">${tipoIcone} ${enc(tipo)}</span>`:""}</div></div>
         <div class="cs-it"><div class="cs-l">Projeto / Cliente</div><div class="cs-v">${enc(cli)}</div></div>${gpLiderHTML}
         <div class="cs-it cs-full"><div class="cs-l">Observação</div><div class="cs-v" style="white-space:pre-wrap;${obsTxt?"":"color:var(--faint);font-style:italic"}">${obsTxt?enc(obsTxt):"— (sem observação)"}</div>${obsAud}</div>
+        ${tarefasHTML}
       </div>`;
   }
   // Botão "Alterar/Sobrescrever" só para administradores e gestores
@@ -3722,7 +3747,7 @@ function openActions(){
 }
 function closeActions(){el("actOverlay").classList.remove("open");actEditing=null;}
 function _regKeyPorCadastro(tab){
-  return ({projetos:"projetos",analistas:"analistas",atividades:"atividades",lideres:"lideres",gps:"gps",feriados:"feriados"})[tab] || "";
+  return ({projetos:"projetos",analistas:"analistas",atividades:"atividades",tarefas:"tarefas",lideres:"lideres",gps:"gps",feriados:"feriados"})[tab] || "";
 }
 function _carregarCadastroTipo(tab){
   if(!tab) return Promise.resolve();
@@ -3751,6 +3776,7 @@ function renderCadastroHome(){
     ["projetos","Projetos","briefcase","Cadastro de projetos, etapas, GP, líder e Go-Live"],
     ["analistas","Analistas","users","Cadastro de analistas, squads e vínculos"],
     ["atividades","Atividades","tag","Tipos de atividade, exigência de observação e regras"],
+    ["tarefas","Tarefas","list-checks","Tarefas vinculadas às atividades (nível abaixo)"],
     ["lideres","Líderes","user-cog","Cadastro de líderes de implantação"],
     ["gps","Gerentes","user-check","Cadastro de gerentes de projeto"],
     ["feriados","Feriados","calendar-x","Calendário usado nas regras de dias úteis"],
@@ -3775,6 +3801,7 @@ function renderTabs(){
       ["projetos","Projetos","briefcase",REG.projetos.length],
       ["analistas","Analistas","users",REG.analistas.length],
       ["atividades","Atividades","tag",(REG.atividades||[]).length],
+      ["tarefas","Tarefas","list-checks",(REG.tarefas||[]).length],
     ]},
     {label:"Pessoas", abas:[
       ["lideres","Líderes","user-cog",REG.lideres.length],
@@ -3807,7 +3834,7 @@ function renderActions(){renderTabs();lucideRefresh();if(!actTab){renderCadastro
 
 function renderList(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
   const b=el("actBody");
-  const addLabel={projetos:"+ Novo projeto",analistas:"+ Novo analista",lideres:"+ Novo líder",gps:"+ Novo gerente",atividades:"+ Nova atividade",feriados:"+ Novo feriado"}[actTab];
+  const addLabel={projetos:"+ Novo projeto",analistas:"+ Novo analista",lideres:"+ Novo líder",gps:"+ Novo gerente",atividades:"+ Nova atividade",tarefas:"+ Nova tarefa",feriados:"+ Novo feriado"}[actTab];
   let items, rows, total=0, ocultos=0;
   // Helper p/ marcar uma linha como inativa e mostrar selo
   const ina=(isAt)=>isAt?"":' inativo';
@@ -3854,6 +3881,20 @@ function renderList(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
       <div class="main"><div class="nm">${enc(a.nome)}${selo(at)}</div>
       <div class="meta"><span><b>${enc(t.nome)}</b></span>${(a.slotsNecessarios!=null&&a.slotsNecessarios!=='')?`<span>· ${a.slotsNecessarios} slot(s)</span>`:''}${(a.etapa&&ETAPA_BY_ID[a.etapa])?`<span>· ${enc(ETAPA_BY_ID[a.etapa].label)}</span>`:''}${a.exigeObs?'<span>· exige observação</span>':''}${a.exigeAta?'<span>· gera ATA</span>':''}${a.enviaEmail===true?'<span>· com e-mail</span>':''}</div></div>
       <span class="chev">›</span></div>`;}).join("");
+  }else if(actTab==="tarefas"){
+    const todas=(REG.tarefas||[]);
+    items=todas.filter(t=>t && ((t.nome||"").toLowerCase().includes(actSearch) || (t.atividade||"").toLowerCase().includes(actSearch)));
+    total=items.length;
+    if(!actShowInativos){ocultos=items.filter(t=>t.ativo===false).length;items=items.filter(t=>t.ativo!==false);}
+    // Agrupa por atividade (alfabética), preservando a ordem de inserção dentro da atividade
+    // — é essa ordem que define a numeração N.1, N.2 também no cronograma.
+    items=items.slice().sort((a,b)=>{const ca=cmpAlpha(a.atividade,b.atividade);return ca!==0?ca:(todas.indexOf(a)-todas.indexOf(b));});
+    rows=items.map(t=>{const at=t.ativo!==false;const atvExiste=(REG.atividades||[]).some(a=>a.nome===t.atividade);const ord=tarefasTodasDaAtividade(t.atividade).indexOf(t)+1;
+      return `<div class="row${ina(at)}" data-idx="${todas.indexOf(t)}">
+      <div class="av" style="background:${colorFor(t.atividade||t.nome)}">${ord||'•'}</div>
+      <div class="main"><div class="nm">${enc(t.nome)}${selo(at)}</div>
+      <div class="meta"><span>Atividade: <b>${t.atividade?enc(t.atividade):'—'}</b></span>${atvExiste?'':' <span class="badge b-inativo">atividade removida</span>'}</div></div>
+      <span class="chev">›</span></div>`;}).join("");
   }else if(actTab==="feriados"){
     const sorted=(REG.feriados||[]).filter(f=>f.nome.toLowerCase().includes(actSearch)).slice().sort((a,b)=>(a.data||"").localeCompare(b.data||""));
     rows=sorted.map(f=>{const d=parseISO(f.data);const dd=String(d.getDate()).padStart(2,"0");
@@ -3878,7 +3919,7 @@ function renderList(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
   const toggleHTML = podeTogglar
     ? `<label class="show-inativos"><input type="checkbox" id="toggleInativos" ${actShowInativos?'checked':''}> Mostrar inativos${ocultos?` (${ocultos})`:""}</label>`
     : "";
-  b.innerHTML=`<div class="act-toolbar"><h3>${{projetos:'Projetos',analistas:'Analistas',lideres:'Líderes',gps:'Gerentes de Projeto (GP)',atividades:'Atividades',feriados:'Feriados'}[actTab]}</h3>
+  b.innerHTML=`<div class="act-toolbar"><h3>${{projetos:'Projetos',analistas:'Analistas',lideres:'Líderes',gps:'Gerentes de Projeto (GP)',atividades:'Atividades',tarefas:'Tarefas',feriados:'Feriados'}[actTab]}</h3>
       ${canEditCadastros()?`<button class="btn primary sm" id="actAdd"><i data-lucide="plus"></i>${addLabel}</button>`:""}
       <input class="search" id="actSearch" placeholder="Buscar…" value="${enc(actSearch)}">${toggleHTML}</div>
     <div class="list">${rows||`<div class="empty-state">${total>0&&ocultos>0?"Todos os registros estão inativos. Marque <b>Mostrar inativos</b> para vê-los.":'Nenhum registro'+(canEditCadastros()?'. Clique em "'+addLabel+'".':' para exibir.')}</div>`}</div>
@@ -3907,6 +3948,7 @@ function renderList(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
   });
   b.querySelectorAll(".row").forEach(r=>r.addEventListener("click",()=>{
     if(actTab==="feriados"){actEditing=REG.feriados[+r.dataset.idx];renderForm();return;}
+    if(actTab==="tarefas"){actEditing=(REG.tarefas||[])[+r.dataset.idx];renderForm();return;}
     const nome=dec(r.dataset.nome);
     if(actTab==="projetos")      actEditing=REG.projetos.find(p=>p.nome===nome);
     else if(actTab==="analistas")actEditing=REG.analistas.find(a=>a.nome===nome);
@@ -3955,6 +3997,14 @@ function _diasUteisEntre(ini,fim){
   return out;
 }
 function _pvExpandir(l){ return (l.ini&&l.fim)?_diasUteisEntre(l.ini,l.fim).map(iso=>({iso, k:key(l.an,iso,l.slot)})):[]; }
+/* ===================== EVOLUÇÃO · % realizado (Fase 3b) =====================
+   Progresso = células planejadas (dias úteis × analista/slot) cujo DATA pertence ao projeto
+   (E1=a · mesma posse que o _pvAplicar usa). Lê o realizado já carregado (histórico completo
+   garantido ao abrir o Gantt). Read-only: não grava nada. */
+function _celRealizadaProj(k, projNome){ const r=DATA[k]; return !!(_temConteudo(r) && _normProj(r.cliente)===_normProj(projNome)); }
+function _pvProgressoCelulas(cells, projNome){ let real=0; (cells||[]).forEach(c=>{ if(_celRealizadaProj(c.k, projNome)) real++; }); const total=(cells||[]).length; return {real, total, frac: total?real/total:0}; }
+// Células de uma tarefa (janela própria, mesmo analista/slot da linha).
+function _pvCelulasTarefa(l, t){ return (t.ini&&t.fim)?_diasUteisEntre(t.ini,t.fim).map(iso=>({iso, k:key(l.an,iso,l.slot)})):[]; }
 function _pvNovoId(){ return "L"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
 function _garantirHistoricoTudo(){
   return Promise.resolve()
@@ -4004,7 +4054,7 @@ function _previstoTabHTML(p){
     return `<div class="pv-proto-banner" style="background:#eef2ff;border-color:#c7d2fe;color:#3730a3"><i data-lucide="info"></i> Salve o projeto (aba “Dados do projeto”) antes de declarar o previsto — o nome do projeto é a referência das alocações.</div>`;
   }
   const ancora=_pvAncora(p);
-  const optAtiv=ativ.map(a=>{const d=_pvDurAtiv(a.nome);return `<option value="${enc(a.nome)}" ${a.nome==="Implantação"?"selected":""}>${enc(a.nome)} · ${d} slot(s)</option>`;}).join("");
+  const optAtiv=ativ.map(a=>{const d=_pvDurAtiv(a.nome);const nt=tarefasDaAtividade(a.nome).length;return `<option value="${enc(a.nome)}" ${a.nome==="Implantação"?"selected":""}>${enc(a.nome)} · ${d} slot(s)${nt?` · ${nt} tarefa(s)`:""}</option>`;}).join("");
   return `
   <div class="pv-proto-banner"><i data-lucide="git-compare-arrows"></i> Monte a sequência de atividades: cada uma puxa a duração (<b>slots necessários</b>) do cadastro e calcula o término pulando fim de semana e feriado. A próxima encadeia no dia útil seguinte. <b>Nada vai pra grade</b> até clicar em <b>Aplicar alocações previstas</b>.</div>
   <div class="pv-incl">
@@ -4023,6 +4073,58 @@ function _previstoTabHTML(p){
   <div id="pvResumo"></div>`;
 }
 
+/* ===================== TAREFAS DATADAS no cronograma (Fase 3a) =====================
+   As tarefas (catálogo da Fase 1) ganham DATAS dentro da janela da atividade, gravadas
+   na própria linha: l.tarefas=[{nome,ini,fim}] (esparso). 1ª tarefa começa no início da
+   atividade; as demais são manuais (T1=C). Várias tarefas podem cobrir o mesmo dia (T3).
+   Nada é carimbado no PREV/DATA: a tarefa do dia é DERIVADA na consulta do slot (T2=A). */
+function _tarefasLinha(l){
+  const cat=tarefasDaAtividade(l&&l.atv||"");
+  const stored=Array.isArray(l&&l.tarefas)?l.tarefas:[];
+  const win0=l&&l.ini||"", win1=l&&l.fim||"";
+  const clamp=iso=>{ if(!iso)return ""; let v=iso; if(win0&&v<win0)v=win0; if(win1&&v>win1)v=win1; return v; };
+  return cat.map((t,j)=>{
+    const s=stored.find(x=>x&&x.nome===t.nome)||null;
+    const rawIni=(s&&s.ini)?s.ini:(j===0?win0:"");   // 1ª tarefa: default = início da atividade
+    const rawFim=(s&&s.fim)?s.fim:"";
+    const ini=clamp(rawIni), fim=clamp(rawFim);
+    const foraJanela=!!((rawIni&&rawIni!==ini)||(rawFim&&rawFim!==fim)||(ini&&fim&&ini>fim));
+    const complete=!!(ini&&fim&&ini<=fim);
+    return {nome:t.nome, num:j+1, ini, fim, complete, foraJanela};
+  });
+}
+// Upsert de data de tarefa na linha (clamp à janela da atividade). Tarefas são metadados
+// de planejamento (Gantt/consulta): NÃO afetam o que já foi aplicado na grade.
+function _pvSetTarefaData(lineIdx, nome, campo, val){
+  const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
+  _pvRecalcChain(p);
+  const l=(p.previstoLinhas||[])[lineIdx]; if(!l)return;
+  if(!Array.isArray(l.tarefas)) l.tarefas=[];
+  let s=l.tarefas.find(x=>x&&x.nome===nome);
+  if(!s){ s={nome, ini:"", fim:""}; l.tarefas.push(s); }
+  let v=(val||"").trim();
+  if(v){ if(l.ini&&v<l.ini)v=l.ini; if(l.fim&&v>l.fim)v=l.fim; }   // recorta à janela
+  if(campo==="ini") s.ini=v; else s.fim=v;
+  const cat=tarefasDaAtividade(l.atv||""); const isFirst=cat.length&&cat[0].nome===nome;
+  if(campo==="fim" && isFirst && !s.ini && l.ini) s.ini=l.ini;     // baka o default da 1ª ao datar o fim
+  if(!s.ini && !s.fim) l.tarefas=l.tarefas.filter(x=>x!==s);       // limpou ambos → remove (mantém esparso)
+  saveReg(); _renderPrevLinhas();
+}
+// Tarefas previstas para um (analista, slot, dia) de um projeto — derivado do cronograma.
+// Usado SÓ na consulta do slot; nunca na grade.
+function _tarefasPrevistasNoSlot(cli, nome, slot, iso){
+  if(!cli||cli==="—")return [];
+  const p=(REG.projetos||[]).find(x=>x&&x.nome===cli);
+  if(!p||!Array.isArray(p.previstoLinhas))return [];
+  const out=[];
+  p.previstoLinhas.forEach((l,idx)=>{
+    if(l.an!==nome||l.slot!==slot)return;
+    if(!(l.ini&&l.fim&&iso>=l.ini&&iso<=l.fim))return;
+    _tarefasLinha(l).forEach(t=>{ if(t.complete&&iso>=t.ini&&iso<=t.fim) out.push(`${idx+1}.${t.num} ${t.nome}`); });
+  });
+  return out;
+}
+
 function _renderPrevLinhas(){
   const host=el("pvLinhas"); if(!host)return;
   const resumo=el("pvResumo"), warn=el("pvWarn");
@@ -4035,7 +4137,7 @@ function _renderPrevLinhas(){
   }
   const overlaps=_prevLinhasOverlap();
   const flagged=new Set(overlaps.flat());
-  let totalSlots=0, termino="", inicio="";
+  let totalSlots=0, termino="", inicio="", totalTarefas=0;
   const head=`<div class="pvx-head"><div>#</div><div>Analista</div><div>Slot</div><div>Atividade</div><div>Início</div><div>Término</div><div>Slots</div><div>Ordem</div><div></div></div>`;
   const rows=L.map((l,idx)=>{
     totalSlots+=(l.slots||0);
@@ -4044,6 +4146,28 @@ function _renderPrevLinhas(){
     const fimTxt=l.fim?`${fmtDM(parseISO(l.fim))}/${parseISO(l.fim).getFullYear()}`:"—";
     const autoCls=l.iniManual?"":"pvx-auto";
     const autoFimCls=l.fimManual?"":"pvx-auto";
+    const tl=_tarefasLinha(l);                        // catálogo + datas (1ª = início da atividade)
+    totalTarefas+=tl.length;
+    const podeEdT=canEditAction("cronograma");
+    let subHTML="";
+    if(tl.length){
+      const linhasT=tl.map(t=>{
+        const flag=t.foraJanela?`<span class="pvt-flag" title="Fora da janela da atividade — ajuste as datas">!</span>`:"";
+        if(podeEdT){
+          return `<div class="pvt-row${t.complete?"":" pvt-inc"}">
+            <span class="pvt-num">${idx+1}.${t.num}</span>
+            <span class="pvt-nm" title="${enc(t.nome)}">${enc(t.nome)}</span>
+            <input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||'')}" max="${enc(l.fim||'')}" title="Início da tarefa">
+            <span class="pvt-arr">→</span>
+            <input type="date" class="pvt-fim" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.fim)}" min="${enc(t.ini||l.ini||'')}" max="${enc(l.fim||'')}" title="Término da tarefa">
+            ${flag}
+          </div>`;
+        }
+        const dt=t.complete?`${fmtDM(parseISO(t.ini))}→${fmtDM(parseISO(t.fim))}`:"sem data";
+        return `<div class="pvt-row pvt-ro"><span class="pvt-num">${idx+1}.${t.num}</span><span class="pvt-nm">${enc(t.nome)}</span><span class="pvt-dtxt">${dt}</span>${flag}</div>`;
+      }).join("");
+      subHTML=`<div class="pvx-tarefas"><div class="pvt-h"><i data-lucide="list-checks"></i> Tarefas <span class="pvt-hint">· 1ª inicia no começo da atividade · demais a preencher · dentro de ${enc(l.ini||'?')}–${enc(l.fim||'?')}</span></div>${linhasT}</div>`;
+    }
     return `<div class="pvx-row${flagged.has(idx)?" pvx-row-warn":""}">
       <div class="pvx-ord">${idx+1}</div>
       <div class="cr-an">${enc(l.an)}</div>
@@ -4054,7 +4178,7 @@ function _renderPrevLinhas(){
       <div>${l.slots||0}</div>
       <div class="pvx-move"><button class="pvx-up" data-idx="${idx}" title="Subir">↑</button><button class="pvx-dn" data-idx="${idx}" title="Descer">↓</button></div>
       <button class="pvx-del" data-idx="${idx}">Remover</button>
-    </div>`;
+    </div>${subHTML}`;
   }).join("");
   host.innerHTML=head+rows;
   host.querySelectorAll(".pvx-del").forEach(b=>b.addEventListener("click",()=>_pvRemoverLinha(+b.dataset.idx)));
@@ -4062,12 +4186,14 @@ function _renderPrevLinhas(){
   host.querySelectorAll(".pvx-dn").forEach(b=>b.addEventListener("click",()=>_pvMover(+b.dataset.idx,1)));
   host.querySelectorAll(".pvx-ini").forEach(inp=>inp.addEventListener("change",()=>_pvSetIni(+inp.dataset.idx,inp.value)));
   host.querySelectorAll(".pvx-fim").forEach(inp=>inp.addEventListener("change",()=>_pvSetFim(+inp.dataset.idx,inp.value)));
+  host.querySelectorAll(".pvt-ini").forEach(inp=>inp.addEventListener("change",()=>_pvSetTarefaData(+inp.dataset.li,dec(inp.dataset.tn),"ini",inp.value)));
+  host.querySelectorAll(".pvt-fim").forEach(inp=>inp.addEventListener("change",()=>_pvSetTarefaData(+inp.dataset.li,dec(inp.dataset.tn),"fim",inp.value)));
   const aplicado=p&&p.previstoAplicadoEm;
   const statusHTML=aplicado?`<span class="pvx-status ok">Aplicado em ${enc(String(aplicado).slice(0,16).replace("T"," "))}</span>`:`<span class="pvx-status pend">Pendente de aplicação</span>`;
   const terminoTxt=termino?`${fmtDM(parseISO(termino))}/${parseISO(termino).getFullYear()}`:"—";
   const inicioTxt=inicio?`${fmtDM(parseISO(inicio))}/${parseISO(inicio).getFullYear()}`:"—";
   if(resumo)resumo.innerHTML=`<div class="pvx-bar">
-    <div class="pvx-term-box">Início previsto <b>${inicioTxt}</b> · Término previsto <b>${terminoTxt}</b> · <b>${totalSlots}</b> slot(s) · ${L.length} atividade(s)</div>
+    <div class="pvx-term-box">Início previsto <b>${inicioTxt}</b> · Término previsto <b>${terminoTxt}</b> · <b>${totalSlots}</b> slot(s) · ${L.length} atividade(s)${totalTarefas?` · <b>${totalTarefas}</b> tarefa(s)`:""}</div>
     <div style="display:flex;gap:10px;align-items:center">${statusHTML}<button class="btn primary" id="pvAplicar"><i data-lucide="check-check"></i> Aplicar alocações previstas</button></div>
   </div>${overlaps.length?`<div class="pv-warn" style="display:flex;margin-top:10px"><i data-lucide="alert-triangle"></i> ${overlaps.length} sobreposição(ões): mesmo analista/slot com datas que se cruzam.</div>`:""}`;
   const apBtn=el("pvAplicar"); if(apBtn)apBtn.addEventListener("click",()=>_pvAplicar(_pvProj));
@@ -4269,6 +4395,8 @@ function _pvAplicar(p){
    uma tela própria com seletor de projeto no topo e a sequência editável abaixo.
    Gating de edição: ação "cronograma" (a visualização do previsto na grade segue em "prealoc"). */
 let _cronProjNome="";
+let _cronView="lista"; // "lista" (edição da sequência) | "gantt" (visualização no tempo · Fase 2)
+let _cronEvolReady=false; // histórico carregado p/ calcular % realizado no Gantt (Fase 3b)
 function _cronProjetos(){ return (REG.projetos||[]).filter(p=>p&&p.nome).slice().sort(byNome); }
 function openCronograma(){
   if(!canViewAction("cronograma")){ alert("Você não tem acesso ao Cronograma de Projetos."); irPara("home"); return; }
@@ -4287,16 +4415,31 @@ function renderCronograma(){
     return `<option value="${enc(p.nome)}" ${p.nome===_cronProjNome?"selected":""}>${st} ${enc(p.nome)}</option>`;
   }).join("");
   const p=_cronProjNome?projs.find(x=>x.nome===_cronProjNome):null;
+  const isGantt=!!(p&&_cronView==="gantt");
+  const toggleHTML=p?`<div class="cron-viewtoggle" role="tablist" aria-label="Modo de visualização">
+      <button class="cvt-btn ${!isGantt?'on':''}" id="cronViewLista" role="tab" aria-selected="${!isGantt}"><i data-lucide="list"></i> Lista</button>
+      <button class="cvt-btn ${isGantt?'on':''}" id="cronViewGantt" role="tab" aria-selected="${isGantt}"><i data-lucide="gantt-chart"></i> Gantt</button>
+    </div>`:"";
+  const corpo=p
+    ? (isGantt?_cronGanttHTML(p):_previstoTabHTML(p))
+    : `<div class="hint" style="padding:16px">Escolha um projeto acima para ver e editar o cronograma.</div>`;
   host.innerHTML=`
-    <div class="pv-proto-banner"><i data-lucide="calendar-range"></i> Selecione um projeto para montar ou ajustar o seu cronograma de atividades previstas. Cada atividade puxa a duração (<b>slots necessários</b>) do cadastro e encadeia pulando fim de semana e feriado. <b>Nada vai pra grade</b> até clicar em <b>Aplicar alocações previstas</b>.</div>
+    <div class="pv-proto-banner"><i data-lucide="calendar-range"></i> Selecione um projeto para montar o cronograma. A visão <b>Lista</b> edita a sequência de atividades; a visão <b>Gantt</b> mostra as barras no tempo, com <b>hoje</b> e o <b>Go-Live</b>. <b>Nada vai pra grade</b> até clicar em <b>Aplicar alocações previstas</b>.</div>
     <div class="cron-pick">
       <div class="f"><label>Projeto</label><select id="cronProjSel">${opts}</select></div>
+      ${toggleHTML}
       <div class="cron-legenda">● cronograma aplicado · ○ pendente de aplicação</div>
     </div>
-    <div id="cronCorpo">${p?_previstoTabHTML(p):`<div class="hint" style="padding:16px">Escolha um projeto acima para ver e editar o cronograma.</div>`}</div>`;
+    <div id="cronCorpo">${corpo}</div>`;
   const sel=el("cronProjSel");
   if(sel)sel.addEventListener("change",()=>{ _cronProjNome=sel.value||""; renderCronograma(); });
-  if(p) _bindCronograma(p);
+  const bL=el("cronViewLista"), bG=el("cronViewGantt");
+  if(bL)bL.addEventListener("click",()=>{ if(_cronView!=="lista"){ _cronView="lista"; renderCronograma(); } });
+  if(bG)bG.addEventListener("click",()=>{ if(_cronView!=="gantt"){ _cronView="gantt"; renderCronograma(); } });
+  if(p && !isGantt) _bindCronograma(p);
+  if(p && isGantt && !_cronEvolReady){
+    _garantirHistoricoTudo().then(()=>{ _cronEvolReady=true; if(_cronView==="gantt"&&_cronProjNome===p.nome) renderCronograma(); });
+  }
   lucideRefresh();
 }
 // Wiring do corpo (formulário de inclusão + tabela) para o projeto selecionado.
@@ -4317,6 +4460,147 @@ function _bindCronograma(p){
     _pvAddLinha(p,{an,slot,atv,ini});
   });
   _renderPrevLinhas();
+}
+
+/* ===================== CRONOGRAMA · GANTT (Fase 2 · visualização pura) =====================
+   Desenha UMA barra por linha de atividade, usando ini/fim já calculados por _pvRecalcChain.
+   As tarefas (Fase 1) entram como marcadores sob a barra + legenda — descritivas, sem datas
+   próprias (D2=a). Eixo automático: dia (span curto) ou semana (span longo). Marcos verticais
+   de hoje e Go-Live, com alerta quando o término previsto ultrapassa o Go-Live. NÃO toca o
+   motor de encadeamento nem a gravação na grade. */
+function _cronGanttHTML(p){
+  if(!Array.isArray(p.previstoLinhas)) p.previstoLinhas=[];
+  _pvRecalcChain(p);
+  const todas=p.previstoLinhas||[];
+  const linhas=todas.filter(l=>l.ini&&l.fim);
+  const semData=todas.length-linhas.length;
+  if(!linhas.length){
+    return `<div class="hint" style="padding:16px"><i data-lucide="info"></i> Nenhuma atividade com datas para desenhar. Vá à visão <b>Lista</b>, inclua atividades e informe o início da 1ª (ou preencha uma etapa no cadastro do projeto).</div>`;
+  }
+  const golive=(p.goLiveAjustado||p.goLivePrevisto||"");
+  const goliveTipo=p.goLiveAjustado?"ajustado":(p.goLivePrevisto?"previsto":"");
+  const hojeISO=toISO(new Date());
+  // --- evolução (Fase 3b): só calcula com histórico carregado ---
+  const evolReady=_cronEvolReady;
+  let gReal=0, gTot=0, gPastReal=0, gPastTot=0;
+  if(evolReady){
+    linhas.forEach(l=>{ _pvExpandir(l).forEach(c=>{ gTot++; const done=_celRealizadaProj(c.k, p.nome); if(done)gReal++; if(c.iso<=hojeISO){ gPastTot++; if(done)gPastReal++; } }); });
+  }
+  const fracGeral=gTot?gReal/gTot:0, fracHoje=gPastTot?gPastReal/gPastTot:0;
+  // --- intervalo (inclui hoje e Go-Live p/ os marcos aparecerem) ---
+  let minISO=linhas[0].ini, maxISO=linhas[0].fim, termISO=linhas[0].fim, iniGeral=linhas[0].ini;
+  linhas.forEach(l=>{ if(l.ini<minISO)minISO=l.ini; if(l.ini<iniGeral)iniGeral=l.ini; if(l.fim>maxISO)maxISO=l.fim; if(l.fim>termISO)termISO=l.fim; });
+  if(golive){ if(golive<minISO)minISO=golive; if(golive>maxISO)maxISO=golive; }
+  if(hojeISO<minISO)minISO=hojeISO; if(hojeISO>maxISO)maxISO=hojeISO;
+  const start=monday(parseISO(minISO));
+  const end=addDays(monday(parseISO(maxISO)),6);   // fecha no domingo da semana do máximo
+  const totalDias=Math.round((end-start)/86400000)+1;
+  const diasUteis=_diasUteisEntre(toISO(start),toISO(end)).length;
+  const modoSemana=diasUteis>42;                   // > ~6 semanas úteis → escala semanal
+  const pxDia=modoSemana?13:28;                    // px por dia de calendário
+  const labelW=210, timelineW=totalDias*pxDia;
+  const offDias=iso=>Math.round((parseISO(iso)-start)/86400000);
+  const inRange=iso=>iso>=toISO(start)&&iso<=toISO(end);
+  const fer=feriadosMap();
+  const cap=m=>m.charAt(0).toUpperCase()+m.slice(1);
+  const fullDM=iso=>{const d=parseISO(iso);return `${fmtDM(d)}/${d.getFullYear()}`;};
+  // --- fundo: fins de semana/feriados (dia) ou faixas alternadas (semana) ---
+  let bg="";
+  if(!modoSemana){
+    for(let i=0;i<totalDias;i++){ const d=addDays(start,i), wd=d.getDay();
+      if(wd===0||wd===6) bg+=`<div class="gantt-wknd" style="left:${i*pxDia}px;width:${pxDia}px"></div>`;
+      else { const iso=toISO(d); if(fer[iso]) bg+=`<div class="gantt-fer" style="left:${i*pxDia}px;width:${pxDia}px" title="${enc(fer[iso])}"></div>`; }
+    }
+  }else{
+    for(let i=0;i<totalDias;i+=7){ if(((i/7)%2)===1) bg+=`<div class="gantt-wknd" style="left:${i*pxDia}px;width:${7*pxDia}px"></div>`; }
+  }
+  // --- eixo (cabeçalho) ---
+  let ticks="";
+  if(!modoSemana){
+    for(let i=0;i<totalDias;i++){ const d=addDays(start,i), first=(d.getDate()===1)||(i===0);
+      ticks+=`<div class="gantt-tick${first?' is-month':''}" style="left:${i*pxDia}px;width:${pxDia}px"><span class="gtk-w">${DOW[d.getDay()][0]}</span><span class="gtk-d">${String(d.getDate()).padStart(2,"0")}</span>${first?`<span class="gtk-mes">${cap(MONTHS[d.getMonth()])}</span>`:""}</div>`;
+    }
+  }else{
+    for(let i=0;i<totalDias;i+=7){ const d=addDays(start,i);
+      ticks+=`<div class="gantt-tick is-month" style="left:${i*pxDia}px;width:${7*pxDia}px"><span class="gtk-d">${fmtDM(d)}</span><span class="gtk-mes">${cap(MONTHS[d.getMonth()])}</span></div>`;
+    }
+  }
+  // --- marcos verticais (hoje + Go-Live) ---
+  let marks="";
+  if(inRange(hojeISO)) marks+=`<div class="gantt-mark gantt-hoje" style="left:${offDias(hojeISO)*pxDia+pxDia/2}px" title="Hoje · ${fmtDM(parseISO(hojeISO))}"><span class="gm-lbl">hoje</span></div>`;
+  if(golive&&inRange(golive)){ const estouro=termISO>golive; marks+=`<div class="gantt-mark gantt-golive${estouro?' is-estouro':''}" style="left:${offDias(golive)*pxDia+pxDia/2}px" title="Go-Live ${goliveTipo} · ${fmtDM(parseISO(golive))}"><span class="gm-lbl">Go-Live</span></div>`; }
+  // --- barras (uma por linha) ---
+  const rows=linhas.map((l,idx)=>{
+    const i0=offDias(l.ini), i1=offDias(l.fim);
+    const left=i0*pxDia, width=Math.max(Math.round(pxDia*0.6),(i1-i0+1)*pxDia);
+    const col=colorFor(l.atv||l.an||"x");
+    const tl=_tarefasLinha(l);
+    const datadas=tl.filter(t=>t.complete).slice().sort((a,b)=>a.ini<b.ini?-1:(a.ini>b.ini?1:0));
+    // alocação em "lanes" (várias tarefas no mesmo dia empilham) — T3
+    const lanes=[]; const placed=datadas.map(t=>{ let ln=-1; for(let q=0;q<lanes.length;q++){ if(lanes[q]<t.ini){ ln=q; break; } } if(ln<0){ ln=lanes.length; lanes.push(t.fim); } else lanes[ln]=t.fim; return {t,ln}; });
+    const nLanes=lanes.length;
+    const rowH=Math.max(38,28+nLanes*12);
+    const barStyle=nLanes?`top:6px;transform:none`:`top:50%;transform:translateY(-50%)`;
+    // evolução por atividade (Fase 3b)
+    const prog=evolReady?_pvProgressoCelulas(_pvExpandir(l), p.nome):null;
+    const atrasado=evolReady && prog && l.fim<hojeISO && prog.frac<1;
+    const fill=prog?`<div class="gantt-fill" style="width:${Math.round(prog.frac*100)}%"></div>`:"";
+    const pctTxt=prog?` · ${Math.round(prog.frac*100)}% (${prog.real}/${prog.total} slot)`:"";
+    const subbars=placed.map(({t,ln})=>{ const sl=offDias(t.ini)*pxDia, sw=Math.max(Math.round(pxDia*0.5),(offDias(t.fim)-offDias(t.ini)+1)*pxDia);
+      const tp=evolReady?_pvProgressoCelulas(_pvCelulasTarefa(l,t), p.nome):null;
+      const sfill=tp?`<div class="gantt-subfill" style="width:${Math.round(tp.frac*100)}%"></div>`:"";
+      const stip=`${(idx+1)+"."+t.num} ${t.nome} · ${fullDM(t.ini)} → ${fullDM(t.fim)}${tp?` · ${Math.round(tp.frac*100)}% (${tp.real}/${tp.total})`:""}`;
+      return `<div class="gantt-subbar" style="left:${sl}px;width:${sw}px;top:${24+ln*12}px;background:${col}" title="${enc(stip)}">${sfill}<span class="gsub-lbl">${idx+1}.${t.num}</span></div>`; }).join("");
+    const kTot=tl.length, kData=datadas.length;
+    const tip=`${enc(l.atv)} · ${enc(l.an)} (${enc(l.slot)}) · ${fullDM(l.ini)} → ${fullDM(l.fim)} · ${l.slots||0} slot(s)${kTot?` · ${kData}/${kTot} tarefa(s) datada(s)`:""}${pctTxt}${atrasado?" · ATRASADO":""}`;
+    return `<div class="gantt-row" style="min-height:${rowH}px">
+      <div class="gantt-rlbl" style="width:${labelW}px"><div class="grl-top"><span class="grl-ord">${idx+1}</span><span class="grl-atv" title="${enc(l.atv)}">${enc(l.atv)}</span>${atrasado?`<span class="grl-atraso" title="Vencida e não concluída">atrasada</span>`:""}</div><div class="grl-sub">${enc(l.an)} · ${enc(l.slot)}${prog?` · <span class="grl-pct">${Math.round(prog.frac*100)}%</span>`:(kTot?` · <span class="grl-tar">${kData}/${kTot} tarefa(s)</span>`:"")}</div></div>
+      <div class="gantt-track" style="width:${timelineW}px;height:${rowH}px">
+        <div class="gantt-bar${atrasado?" is-atrasado":""}" style="left:${left}px;width:${width}px;background:${col};${barStyle}" title="${tip}">${fill}<span class="gbar-lbl">${enc(l.atv)}</span></div>
+        ${subbars}
+      </div>
+    </div>`;
+  }).join("");
+  // --- legenda de tarefas (com datas) ---
+  const comTarefas=linhas.map((l,idx)=>({idx,atv:l.atv,subs:_tarefasLinha(l)})).filter(x=>x.subs.length);
+  const legenda=comTarefas.length?`<div class="gantt-legenda"><div class="gl-h"><i data-lucide="list-checks"></i> Tarefas por atividade</div>${comTarefas.map(x=>`<div class="gl-item"><b>${x.idx+1}. ${enc(x.atv)}</b> — ${x.subs.map(t=>`<span class="gl-tar${t.complete?"":" gl-nodate"}">${x.idx+1}.${t.num} ${enc(t.nome)}${t.complete?` <span class="gl-dt">${fmtDM(parseISO(t.ini))}→${fmtDM(parseISO(t.fim))}</span>`:` <span class="gl-dt">sem data</span>`}</span>`).join(" · ")}</div>`).join("")}</div>`:"";
+  // --- resumo + alerta de prazo (Go-Live) ---
+  const resumoTxt=`Início previsto <b>${fullDM(iniGeral)}</b> · Término previsto <b>${fullDM(termISO)}</b>${golive?` · Go-Live ${goliveTipo} <b>${fullDM(golive)}</b>`:` · Go-Live <b>não informado</b>`}`;
+  let alerta="";
+  if(golive){
+    if(termISO>golive){ const du=Math.max(0,_diasUteisEntre(golive,termISO).length-1); alerta=`<div class="gantt-alert is-bad"><i data-lucide="alert-triangle"></i> Término previsto <b>${du} dia(s) útil(eis)</b> após o Go-Live ${goliveTipo}. Risco de atraso.</div>`; }
+    else { const du=Math.max(0,_diasUteisEntre(termISO,golive).length-1); alerta=`<div class="gantt-alert is-ok"><i data-lucide="check-check"></i> Término previsto dentro do Go-Live ${goliveTipo}${du?` · folga de ${du} dia(s) útil(eis)`:""}.</div>`; }
+  }
+  const aviso=semData?`<div class="hint" style="margin-top:8px"><i data-lucide="info"></i> ${semData} atividade(s) sem data — ajuste o início na visão Lista para aparecerem no Gantt.</div>`:"";
+  // --- KPI de evolução (Fase 3b) ---
+  const pct=f=>Math.round(f*100);
+  const evolHTML=!evolReady
+    ? `<div class="gantt-evol is-loading"><span class="ge-spin"></span> Calculando evolução…</div>`
+    : (gTot
+      ? `<div class="gantt-evol">
+          <div class="ge-kpi"><div class="ge-l">Evolução geral</div><div class="ge-barwrap"><div class="ge-bar" style="width:${pct(fracGeral)}%"></div></div><div class="ge-v">${pct(fracGeral)}% <span class="ge-sub">${gReal}/${gTot} slot</span></div></div>
+          <div class="ge-kpi"><div class="ge-l">Esperado até hoje</div><div class="ge-barwrap"><div class="ge-bar ${fracHoje>=0.999?'ok':(fracHoje>=0.7?'warn':'bad')}" style="width:${pct(fracHoje)}%"></div></div><div class="ge-v">${pct(fracHoje)}% <span class="ge-sub">${gPastReal}/${gPastTot} até hoje</span></div></div>
+        </div>`
+      : `<div class="gantt-evol"><div class="ge-l">Sem slots planejados para medir evolução.</div></div>`);
+  return `
+    <div class="gantt-bar2">${resumoTxt}</div>
+    ${evolHTML}
+    ${alerta}
+    <div class="gantt-wrap"><div class="gantt-scroll">
+      <div class="gantt" style="width:${labelW+timelineW}px">
+        <div class="gantt-head">
+          <div class="gantt-hlbl" style="width:${labelW}px">Atividade</div>
+          <div class="gantt-axis" style="width:${timelineW}px">${ticks}</div>
+        </div>
+        <div class="gantt-body">
+          <div class="gantt-bg" style="left:${labelW}px;width:${timelineW}px">${bg}</div>
+          <div class="gantt-marks" style="left:${labelW}px;width:${timelineW}px">${marks}</div>
+          ${rows}
+        </div>
+      </div>
+    </div></div>
+    ${legenda}
+    ${aviso}`;
 }
 
 function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
@@ -4516,13 +4800,48 @@ function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
         // se renomeou, propaga nas alocações que apontavam pelo nome antigo
         if(actEditing.nome!==nome){
           Object.values(DATA).forEach(v=>{if(v.atividade===actEditing.nome)v.atividade=nome;});
+          (REG.tarefas||[]).forEach(t=>{if(t&&t.atividade===actEditing.nome)t.atividade=nome;}); // mantém o vínculo das tarefas
           actEditing.nome=nome;
         }
         actEditing.tipo=tipo;actEditing.ativo=ativoNovo;actEditing.exigeObs=exigeObs;actEditing.exigeAta=exigeAta;actEditing.enviaEmail=enviaEmail;actEditing.slotsNecessarios=slotsNecessarios;actEditing.etapa=etapa;actEditing.capTrack=capTrack;actEditing.capStage=capStage;
         actEditing.updatedAt=agora;actEditing.updatedBy=userTag;
       }
       finishForm();
-    },isNew?null:()=>{REG.atividades=(REG.atividades||[]).filter(x=>x!==actEditing);finishForm();});
+    },isNew?null:()=>{const _atvNome=actEditing.nome;REG.atividades=(REG.atividades||[]).filter(x=>x!==actEditing);REG.tarefas=(REG.tarefas||[]).filter(t=>!t||t.atividade!==_atvNome);finishForm();});
+  }
+  else if(actTab==="tarefas"){
+    const t=isNew?{nome:"",atividade:"",ativo:true}:actEditing;
+    const userTag=(_currentUser&&_currentUser.email)||"local";
+    const ativo=t.ativo!==false;
+    const ativAtivas=(REG.atividades||[]).filter(a=>a.ativo!==false).slice().sort(byNome);
+    const nomesAtiv=ativAtivas.map(a=>a.nome);
+    // Preserva o vínculo se a atividade da tarefa estiver inativa/removida (não some da combo)
+    const extra=(t.atividade && !nomesAtiv.includes(t.atividade))?`<option value="${enc(t.atividade)}" selected>${enc(t.atividade)} (inativa/removida)</option>`:"";
+    b.innerHTML=`<div class="crumb"><button id="back">‹ Tarefas</button>/ ${isNew?'Nova':enc(t.nome)}</div>
+      <div class="form-grid">
+        <div class="f full"><label>Nome da tarefa</label><input type="text" id="f_nome" value="${enc(t.nome)}" placeholder="Ex.: Permissões e usuários"></div>
+        <div class="f full"><label>Atividade vinculada <span class="lbl-soft">· nível acima</span></label>
+          <select id="f_atv"><option value="">— selecione a atividade —</option>${extra}${ativAtivas.map(a=>`<option value="${enc(a.nome)}" ${a.nome===t.atividade?'selected':''}>${enc(a.nome)}</option>`).join("")}</select></div>
+        <div class="f"><label>Situação</label><select id="f_ativo"><option value="ativo" ${ativo?'selected':''}>Ativa</option><option value="inativo" ${!ativo?'selected':''}>Inativa</option></select></div>
+      </div>
+      <div class="hint">A tarefa é um <b>nível abaixo</b> da atividade. No <b>Cronograma de Projetos</b> ela aparece como sub-item (ex.: <b>1.1</b>) sob a atividade correspondente. ${isNew?'':`<br>Criado por ${enc(t.createdBy||'—')} em ${t.createdAt?enc(t.createdAt.slice(0,10)):'—'}${t.updatedBy?(' · última alteração por '+enc(t.updatedBy)+' em '+enc((t.updatedAt||'').slice(0,10))):''}.`}</div>`;
+    bindFormFooter(()=>{
+      const nome=el("f_nome").value.trim();if(!nome)return;
+      const atividade=el("f_atv").value;
+      if(!atividade){alert("Selecione a atividade à qual esta tarefa pertence.");return;}
+      const ativoNovo=el("f_ativo").value==="ativo";
+      const agora=new Date().toISOString();
+      const dup=(REG.tarefas||[]).some(x=>x!==actEditing && (x.atividade||"")===atividade && (x.nome||"").toLowerCase()===nome.toLowerCase());
+      if(dup){alert("Já existe uma tarefa com este nome nesta atividade.");return;}
+      if(isNew){
+        REG.tarefas=REG.tarefas||[];
+        REG.tarefas.push({nome,atividade,ativo:ativoNovo,createdAt:agora,createdBy:userTag,updatedAt:agora,updatedBy:userTag});
+      }else{
+        actEditing.nome=nome;actEditing.atividade=atividade;actEditing.ativo=ativoNovo;
+        actEditing.updatedAt=agora;actEditing.updatedBy=userTag;
+      }
+      finishForm();
+    },isNew?null:()=>{REG.tarefas=(REG.tarefas||[]).filter(x=>x!==actEditing);finishForm();});
   }
   else if(actTab==="feriados"){
     const f=isNew?{data:"",nome:""}:actEditing;
