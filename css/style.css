@@ -522,6 +522,46 @@ td.cell.locked,td.gcell.locked{cursor:not-allowed}
 .grl-dev.dev-ok{color:#1f7a3d;background:#e3f3e8}
 .grl-dev.dev-zero{color:#777;background:#f0f0f0}
 .grl-dev.dev-novo{color:#1e40af;background:#e7eefe}
+/* Linha "só plano" (sem analista/slot · Fase 6a) */
+.pvx-row-plano{background:#fbfaff}
+.pvx-plano-tag{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#5b4bbf;background:#ece9fb;border-radius:5px;padding:1px 6px}
+.pvx-defina{font-size:11px;color:var(--faint);font-style:italic}
+.grl-plano{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:#5b4bbf;background:#ece9fb;border-radius:5px;padding:1px 5px}
+.cron-import{margin-left:6px}
+/* Importador CSV (Fase 6a) */
+.imp-overlay{position:fixed;inset:0;background:rgba(20,20,25,.45);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px}
+.imp-modal{background:#fff;border-radius:16px;width:min(720px,96vw);max-height:88vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3);overflow:hidden}
+.imp-head{display:flex;align-items:flex-start;justify-content:space-between;padding:16px 18px;border-bottom:1px solid var(--line)}
+.imp-head b{font-size:15px}
+.imp-sub{font-size:12px;color:var(--muted);margin-top:2px}
+.imp-x{border:0;background:transparent;font-size:22px;line-height:1;color:#999;cursor:pointer;padding:0 4px}
+.imp-x:hover{color:#333}
+.imp-body{padding:16px 18px;overflow:auto}
+.imp-file{display:inline-flex;align-items:center;gap:7px;border:1px dashed var(--line2);border-radius:10px;padding:9px 14px;cursor:pointer;font-size:13px;font-weight:600;color:#444;background:#fafafa}
+.imp-file:hover{border-color:var(--orange);color:var(--orange)}
+.imp-file input{display:none}
+.imp-file i{width:15px;height:15px}
+.imp-fname{font-size:12px;color:var(--muted);margin-left:10px}
+.imp-warn{margin-top:12px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;border-radius:9px;padding:9px 12px;font-size:12px}
+.imp-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:14px 0 8px}
+.imp-row label{font-size:12.5px;color:#444}
+.imp-row select{font-size:13px;padding:6px 9px;border:1px solid var(--line2);border-radius:8px;background:#fff}
+.imp-counts{font-size:12.5px;color:#444}
+.imp-legend{display:flex;gap:14px;font-size:11px;margin:4px 0 8px;color:var(--muted)}
+.imp-k::before{content:"";display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px;vertical-align:middle}
+.imp-k.imp-n-atv::before{background:var(--orange)}
+.imp-k.imp-n-tar::before{background:#7c89f6}
+.imp-k.imp-n-grp::before{background:#d4d4d8}
+.imp-tree{border:1px solid var(--line);border-radius:10px;max-height:40vh;overflow:auto;background:#fcfcfc;font-size:12px}
+.imp-n{padding:3px 8px;border-bottom:1px solid #f4f4f4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.imp-n:last-child{border-bottom:0}
+.imp-n-atv{font-weight:700;color:#7a3b12;background:#fff5ec}
+.imp-n-tar{color:#3a4380}
+.imp-n-grp{color:#9aa0a6}
+.imp-dt{font-variant-numeric:tabular-nums;color:#999;font-weight:400;font-size:11px;margin-left:6px}
+.imp-dt.imp-nodt{color:#c9a; font-style:italic}
+.imp-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 18px;border-top:1px solid var(--line)}
+@media(max-width:760px){.imp-fname{display:block;margin:8px 0 0}}
 /* legenda de tarefas */
 .gantt-legenda{margin-top:14px;border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:#fcfcfc}
 .gantt-legenda .gl-h{display:flex;align-items:center;gap:7px;font-size:12px;font-weight:700;color:#444;margin-bottom:8px}
