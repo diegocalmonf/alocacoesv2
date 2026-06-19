@@ -542,25 +542,35 @@ function prevGet(c,iso,slot){ return PREV[key(c,iso,slot)] || null; }
 function prevSet(c,iso,slot,reg){ PREV[key(c,iso,slot)] = reg; persistPrev(); }
 function prevDel(c,iso,slot){ delete PREV[key(c,iso,slot)]; persistPrev(); }
 let _pt=null;
+let _persistPending=false, _persistLast=Promise.resolve();
+function _persistNow(){
+  _persistPending=false;
+  if(!_db||!_fbReady||!_initialLoadDone) return _persistLast;
+  if(ALLOC_WINDOWED_READ){
+    _persistLast=Promise.all([
+      _db.ref(DB_PATH+"/reg").set(sanitizeForFirebase(REG)),
+      Promise.resolve(_writeWindowBuckets())
+    ]).then(()=>{ setSyncBadge("online"); try{ if(typeof _publishAlocSnapshot==='function') _publishAlocSnapshot(); }catch(e){} })
+      .catch(err=>{ setSyncBadge("erro"); if(err&&err.code==="PERMISSION_DENIED")alert("Sem permissão para salvar (verifique as Regras do Firebase ou seu perfil)."); });
+    return _persistLast;
+  }
+  _persistLast=_db.ref(DB_PATH).set(sanitizeForFirebase({reg:REG,alloc:allocToArray()}))
+    .then(()=>{setSyncBadge("online"); try{ if(typeof _publishAlocSnapshot==='function') _publishAlocSnapshot(); }catch(e){} if(ALLOC_DUALWRITE){ try{ _dualWriteBuckets(); }catch(e){ console.warn("[buckets] dual-write:",e); } }})
+    .catch(err=>{setSyncBadge("erro");if(err&&err.code==="PERMISSION_DENIED")alert("Sem permissão para salvar (verifique as Regras do Firebase ou seu perfil).");});
+  return _persistLast;
+}
 function persist(){
   lsSaveLocal();
   if(!_db||!_fbReady||!_initialLoadDone)return;
+  _persistPending=true;
   clearTimeout(_pt);
-  _pt=setTimeout(()=>{
-    if(ALLOC_WINDOWED_READ){
-      // MODO JANELA: NUNCA sobrescreve o monólito a partir do DATA parcial.
-      // Grava só o registro (state/reg) e os buckets dos meses presentes no DATA.
-      Promise.all([
-        _db.ref(DB_PATH+"/reg").set(sanitizeForFirebase(REG)),
-        Promise.resolve(_writeWindowBuckets())
-      ]).then(()=>{ setSyncBadge("online"); try{ if(typeof _publishAlocSnapshot==='function') _publishAlocSnapshot(); }catch(e){} })
-        .catch(err=>{ setSyncBadge("erro"); if(err&&err.code==="PERMISSION_DENIED")alert("Sem permissão para salvar (verifique as Regras do Firebase ou seu perfil)."); });
-      return;
-    }
-    _db.ref(DB_PATH).set(sanitizeForFirebase({reg:REG,alloc:allocToArray()}))
-      .then(()=>{setSyncBadge("online"); try{ if(typeof _publishAlocSnapshot==='function') _publishAlocSnapshot(); }catch(e){} if(ALLOC_DUALWRITE){ try{ _dualWriteBuckets(); }catch(e){ console.warn("[buckets] dual-write:",e); } }})
-      .catch(err=>{setSyncBadge("erro");if(err&&err.code==="PERMISSION_DENIED")alert("Sem permissão para salvar (verifique as Regras do Firebase ou seu perfil).");});
-  },150);
+  _pt=setTimeout(_persistNow,150);
+}
+// Força a gravação pendente AGORA e devolve a promise — usar antes de qualquer re-leitura
+// do `reg` (ex.: loader por aba), senão um read pode sobrescrever o REG local não salvo.
+function flushPersist(){
+  if(_persistPending){ clearTimeout(_pt); _persistNow(); }
+  return _persistLast||Promise.resolve();
 }
 // As duas funções antigas agora roteiam para a persistência local+nuvem
 function saveAlloc(){persist();}
@@ -1510,7 +1520,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.74.0";
+const APP_VERSION = "1.74.1";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -3764,7 +3774,9 @@ function _carregarCadastroTipo(tab){
   }
   const k=_regKeyPorCadastro(tab);
   if(!k || !_db){ _cadastrosCarregados[tab]=true; return Promise.resolve(); }
-  return _db.ref(DB_PATH+"/reg/"+k).once("value").then(s=>{
+  // Flush de gravação pendente ANTES de reler o reg — senão este read pode sobrescrever
+  // alterações locais ainda não salvas (ex.: previstoLinhas recém-incluídas no cronograma).
+  return Promise.resolve(flushPersist()).then(()=>_db.ref(DB_PATH+"/reg/"+k).once("value")).then(s=>{
     const v=s.val();
     if(v!=null) REG[k]=v;
     _cadastrosCarregados[tab]=true;
