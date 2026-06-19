@@ -1510,7 +1510,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.73.0";
+const APP_VERSION = "1.74.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -4005,6 +4005,38 @@ function _celRealizadaProj(k, projNome){ const r=DATA[k]; return !!(_temConteudo
 function _pvProgressoCelulas(cells, projNome){ let real=0; (cells||[]).forEach(c=>{ if(_celRealizadaProj(c.k, projNome)) real++; }); const total=(cells||[]).length; return {real, total, frac: total?real/total:0}; }
 // Células de uma tarefa (janela própria, mesmo analista/slot da linha).
 function _pvCelulasTarefa(l, t){ return (t.ini&&t.fim)?_diasUteisEntre(t.ini,t.fim).map(iso=>({iso, k:key(l.an,iso,l.slot)})):[]; }
+/* ===================== BASELINE / REPLANEJAMENTO (Fase 4) =====================
+   Baseline = congelamento (snapshot) do plano vigente num instante: cópia profunda das
+   linhas + datas + tarefas, guardada em p.baselineCronograma. O previstoLinhas segue
+   vigente/editável; a baseline é só leitura. Desvio = vigente − baseline (em dias úteis).
+   B1=única (recongelar substitui) · B2=snapshot completo · B4=casa por l.id. Retrocompatível. */
+function _pvCongelarBaseline(p, rotulo){
+  if(!p||!canEditAction("cronograma"))return false;
+  _pvRecalcChain(p);
+  const linhas=(p.previstoLinhas||[]).map(l=>({
+    id:l.id, an:l.an, slot:l.slot, atv:l.atv, ini:l.ini||"", fim:l.fim||"", slots:l.slots||0,
+    iniManual:!!l.iniManual, fimManual:!!l.fimManual,
+    tarefas:Array.isArray(l.tarefas)?l.tarefas.map(t=>({nome:t.nome, ini:t.ini||"", fim:t.fim||""})):[]
+  }));
+  p.baselineCronograma={
+    criadoEm:new Date().toISOString(),
+    criadoPor:(_currentUser&&_currentUser.email)||"local",
+    rotulo:(rotulo||"").trim(),
+    golive:(p.goLiveAjustado||p.goLivePrevisto||""),
+    linhas
+  };
+  saveReg(); return true;
+}
+function _baselineLinhaPorId(p, id){ const b=p&&p.baselineCronograma; if(!b||!Array.isArray(b.linhas))return null; return b.linhas.find(x=>x&&x.id===id)||null; }
+// Desvio em dias úteis: positivo = atrasou (vigente depois da baseline); negativo = adiantou.
+function _duDelta(baseISO, nowISO){
+  if(!baseISO||!nowISO) return null;
+  if(baseISO===nowISO) return 0;
+  if(nowISO>baseISO) return  (_diasUteisEntre(baseISO, nowISO).length-1);
+  return -(_diasUteisEntre(nowISO, baseISO).length-1);
+}
+// Término (máx fim) de um conjunto de linhas.
+function _termDe(linhas){ let t=""; (linhas||[]).forEach(l=>{ if(l.fim && (!t||l.fim>t)) t=l.fim; }); return t; }
 function _pvNovoId(){ return "L"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
 function _garantirHistoricoTudo(){
   return Promise.resolve()
@@ -4397,6 +4429,7 @@ function _pvAplicar(p){
 let _cronProjNome="";
 let _cronView="lista"; // "lista" (edição da sequência) | "gantt" (visualização no tempo · Fase 2)
 let _cronEvolReady=false; // histórico carregado p/ calcular % realizado no Gantt (Fase 3b)
+let _cronCompareBaseline=false; // exibir barras-fantasma da baseline no Gantt (Fase 4)
 function _cronProjetos(){ return (REG.projetos||[]).filter(p=>p&&p.nome).slice().sort(byNome); }
 function openCronograma(){
   if(!canViewAction("cronograma")){ alert("Você não tem acesso ao Cronograma de Projetos."); irPara("home"); return; }
@@ -4436,6 +4469,16 @@ function renderCronograma(){
   const bL=el("cronViewLista"), bG=el("cronViewGantt");
   if(bL)bL.addEventListener("click",()=>{ if(_cronView!=="lista"){ _cronView="lista"; renderCronograma(); } });
   if(bG)bG.addEventListener("click",()=>{ if(_cronView!=="gantt"){ _cronView="gantt"; renderCronograma(); } });
+  const bFreeze=el("cronFreezeBase"), bCmp=el("cronCmpBase");
+  if(bFreeze)bFreeze.addEventListener("click",()=>{
+    if(!p)return;
+    const existe=p.baselineCronograma&&Array.isArray(p.baselineCronograma.linhas)&&p.baselineCronograma.linhas.length;
+    const msg=existe?"Já existe uma baseline para este projeto. Recongelar vai SUBSTITUIR a anterior pelo plano atual. Continuar?":"Congelar o plano atual como linha de base (baseline) deste projeto?";
+    if(!confirm(msg))return;
+    const rot=prompt("Rótulo da baseline (opcional):","")||"";
+    if(_pvCongelarBaseline(p,rot)){ _cronCompareBaseline=true; renderCronograma(); }
+  });
+  if(bCmp)bCmp.addEventListener("click",()=>{ _cronCompareBaseline=!_cronCompareBaseline; renderCronograma(); });
   if(p && !isGantt) _bindCronograma(p);
   if(p && isGantt && !_cronEvolReady){
     _garantirHistoricoTudo().then(()=>{ _cronEvolReady=true; if(_cronView==="gantt"&&_cronProjNome===p.nome) renderCronograma(); });
@@ -4487,11 +4530,16 @@ function _cronGanttHTML(p){
     linhas.forEach(l=>{ _pvExpandir(l).forEach(c=>{ gTot++; const done=_celRealizadaProj(c.k, p.nome); if(done)gReal++; if(c.iso<=hojeISO){ gPastTot++; if(done)gPastReal++; } }); });
   }
   const fracGeral=gTot?gReal/gTot:0, fracHoje=gPastTot?gPastReal/gPastTot:0;
-  // --- intervalo (inclui hoje e Go-Live p/ os marcos aparecerem) ---
+  // --- baseline (Fase 4) ---
+  const base=p.baselineCronograma;
+  const temBase=!!(base&&Array.isArray(base.linhas)&&base.linhas.length);
+  const comparar=_cronCompareBaseline && temBase;
+  // --- intervalo (inclui hoje, Go-Live e baseline comparada p/ tudo aparecer) ---
   let minISO=linhas[0].ini, maxISO=linhas[0].fim, termISO=linhas[0].fim, iniGeral=linhas[0].ini;
   linhas.forEach(l=>{ if(l.ini<minISO)minISO=l.ini; if(l.ini<iniGeral)iniGeral=l.ini; if(l.fim>maxISO)maxISO=l.fim; if(l.fim>termISO)termISO=l.fim; });
   if(golive){ if(golive<minISO)minISO=golive; if(golive>maxISO)maxISO=golive; }
   if(hojeISO<minISO)minISO=hojeISO; if(hojeISO>maxISO)maxISO=hojeISO;
+  if(comparar){ base.linhas.forEach(b=>{ if(b.ini&&b.ini<minISO)minISO=b.ini; if(b.fim&&b.fim>maxISO)maxISO=b.fim; }); }
   const start=monday(parseISO(minISO));
   const end=addDays(monday(parseISO(maxISO)),6);   // fecha no domingo da semana do máximo
   const totalDias=Math.round((end-start)/86400000)+1;
@@ -4553,10 +4601,24 @@ function _cronGanttHTML(p){
       return `<div class="gantt-subbar" style="left:${sl}px;width:${sw}px;top:${24+ln*12}px;background:${col}" title="${enc(stip)}">${sfill}<span class="gsub-lbl">${idx+1}.${t.num}</span></div>`; }).join("");
     const kTot=tl.length, kData=datadas.length;
     const tip=`${enc(l.atv)} · ${enc(l.an)} (${enc(l.slot)}) · ${fullDM(l.ini)} → ${fullDM(l.fim)} · ${l.slots||0} slot(s)${kTot?` · ${kData}/${kTot} tarefa(s) datada(s)`:""}${pctTxt}${atrasado?" · ATRASADO":""}`;
+    // baseline da atividade (casa por l.id) — barra-fantasma + desvio do término (Fase 4)
+    const bl=comparar?_baselineLinhaPorId(p, l.id):null;
+    let ghost="", devBadge="", devTip="";
+    if(comparar){
+      if(bl && bl.ini && bl.fim){
+        const gl=offDias(bl.ini)*pxDia, gw=Math.max(Math.round(pxDia*0.6),(offDias(bl.fim)-offDias(bl.ini)+1)*pxDia);
+        ghost=`<div class="gantt-ghost" style="left:${gl}px;width:${gw}px;${barStyle}" title="Baseline: ${fullDM(bl.ini)} → ${fullDM(bl.fim)}"></div>`;
+        const dv=_duDelta(bl.fim, l.fim);
+        if(dv!==null){ const cls=dv>0?"dev-bad":(dv<0?"dev-ok":"dev-zero"); const txt=dv>0?`+${dv}du`:(dv<0?`${dv}du`:"0"); devBadge=`<span class="grl-dev ${cls}" title="Término vs baseline">${txt}</span>`; devTip=` · baseline ${fullDM(bl.fim)} (${dv>0?"+":""}${dv} du)`; }
+      } else {
+        devBadge=`<span class="grl-dev dev-novo" title="Atividade sem baseline">novo</span>`;
+      }
+    }
     return `<div class="gantt-row" style="min-height:${rowH}px">
-      <div class="gantt-rlbl" style="width:${labelW}px"><div class="grl-top"><span class="grl-ord">${idx+1}</span><span class="grl-atv" title="${enc(l.atv)}">${enc(l.atv)}</span>${atrasado?`<span class="grl-atraso" title="Vencida e não concluída">atrasada</span>`:""}</div><div class="grl-sub">${enc(l.an)} · ${enc(l.slot)}${prog?` · <span class="grl-pct">${Math.round(prog.frac*100)}%</span>`:(kTot?` · <span class="grl-tar">${kData}/${kTot} tarefa(s)</span>`:"")}</div></div>
+      <div class="gantt-rlbl" style="width:${labelW}px"><div class="grl-top"><span class="grl-ord">${idx+1}</span><span class="grl-atv" title="${enc(l.atv)}">${enc(l.atv)}</span>${atrasado?`<span class="grl-atraso" title="Vencida e não concluída">atrasada</span>`:""}${devBadge}</div><div class="grl-sub">${enc(l.an)} · ${enc(l.slot)}${prog?` · <span class="grl-pct">${Math.round(prog.frac*100)}%</span>`:(kTot?` · <span class="grl-tar">${kData}/${kTot} tarefa(s)</span>`:"")}</div></div>
       <div class="gantt-track" style="width:${timelineW}px;height:${rowH}px">
-        <div class="gantt-bar${atrasado?" is-atrasado":""}" style="left:${left}px;width:${width}px;background:${col};${barStyle}" title="${tip}">${fill}<span class="gbar-lbl">${enc(l.atv)}</span></div>
+        ${ghost}
+        <div class="gantt-bar${atrasado?" is-atrasado":""}" style="left:${left}px;width:${width}px;background:${col};${barStyle}" title="${tip}${devTip}">${fill}<span class="gbar-lbl">${enc(l.atv)}</span></div>
         ${subbars}
       </div>
     </div>`;
@@ -4572,6 +4634,19 @@ function _cronGanttHTML(p){
     else { const du=Math.max(0,_diasUteisEntre(termISO,golive).length-1); alerta=`<div class="gantt-alert is-ok"><i data-lucide="check-check"></i> Término previsto dentro do Go-Live ${goliveTipo}${du?` · folga de ${du} dia(s) útil(eis)`:""}.</div>`; }
   }
   const aviso=semData?`<div class="hint" style="margin-top:8px"><i data-lucide="info"></i> ${semData} atividade(s) sem data — ajuste o início na visão Lista para aparecerem no Gantt.</div>`:"";
+  // --- baseline: toolbar, faixa de desvio do término e órfãs (Fase 4) ---
+  const podeEdBase=canEditAction("cronograma");
+  const baseInfo=temBase?`Baseline de ${fullDM((base.criadoEm||"").slice(0,10))}${base.rotulo?` · ${enc(base.rotulo)}`:""} por ${enc(base.criadoPor||"—")}`:"Nenhuma baseline congelada";
+  const baseTerm=temBase?_termDe(base.linhas):"";
+  const devTerm=(temBase&&baseTerm)?_duDelta(baseTerm, termISO):null;
+  const baseToolbar=`<div class="gantt-basebar">
+    ${podeEdBase?`<button class="btn gbb-btn" id="cronFreezeBase"><i data-lucide="flag"></i> ${temBase?"Recongelar baseline":"Congelar baseline"}</button>`:""}
+    <button class="btn gbb-btn${comparar?" on":""}" id="cronCmpBase" ${temBase?"":"disabled"}><i data-lucide="git-compare-arrows"></i> ${comparar?"Ocultar baseline":"Comparar com baseline"}</button>
+    <span class="gbb-info">${baseInfo}</span>
+  </div>`;
+  const baseStrip=temBase?`<div class="gantt-base-strip ${devTerm>0?'is-bad':(devTerm<0?'is-ok':'is-zero')}"><i data-lucide="${devTerm>0?'trending-up':(devTerm<0?'trending-down':'minus')}"></i> Término · baseline <b>${baseTerm?fullDM(baseTerm):'—'}</b> → vigente <b>${fullDM(termISO)}</b>${devTerm===null?"":` · <b>${devTerm>0?`+${devTerm} dia(s) útil(eis) de atraso`:(devTerm<0?`${-devTerm} dia(s) útil(eis) adiantado`:"no prazo da baseline")}</b>`}</div>`:"";
+  const orfas=temBase?base.linhas.filter(b=>b&&b.id&&!todas.some(l=>l&&l.id===b.id)):[];
+  const orfaNote=(comparar&&orfas.length)?`<div class="hint" style="margin-top:8px"><i data-lucide="info"></i> ${orfas.length} atividade(s) da baseline não estão mais no plano atual: ${orfas.map(o=>enc(o.atv)).join(", ")}.</div>`:"";
   // --- KPI de evolução (Fase 3b) ---
   const pct=f=>Math.round(f*100);
   const evolHTML=!evolReady
@@ -4583,8 +4658,10 @@ function _cronGanttHTML(p){
         </div>`
       : `<div class="gantt-evol"><div class="ge-l">Sem slots planejados para medir evolução.</div></div>`);
   return `
+    ${baseToolbar}
     <div class="gantt-bar2">${resumoTxt}</div>
     ${evolHTML}
+    ${baseStrip}
     ${alerta}
     <div class="gantt-wrap"><div class="gantt-scroll">
       <div class="gantt" style="width:${labelW+timelineW}px">
@@ -4600,7 +4677,8 @@ function _cronGanttHTML(p){
       </div>
     </div></div>
     ${legenda}
-    ${aviso}`;
+    ${aviso}
+    ${orfaNote}`;
 }
 
 function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
