@@ -1520,7 +1520,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.75.0";
+const APP_VERSION = "1.76.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -4008,7 +4008,7 @@ function _diasUteisEntre(ini,fim){
   while(d<=end && guard++<2000){ const iso=toISO(d); const wknd=(d.getDay()===0||d.getDay()===6); if(!wknd && !fer[iso]) out.push(iso); d=addDays(d,1); }
   return out;
 }
-function _pvExpandir(l){ return (l.ini&&l.fim)?_diasUteisEntre(l.ini,l.fim).map(iso=>({iso, k:key(l.an,iso,l.slot)})):[]; }
+function _pvExpandir(l){ return (l.ini&&l.fim&&l.an&&l.slot)?_diasUteisEntre(l.ini,l.fim).map(iso=>({iso, k:key(l.an,iso,l.slot)})):[]; }
 /* ===================== EVOLUÇÃO · % realizado (Fase 3b) =====================
    Progresso = células planejadas (dias úteis × analista/slot) cujo DATA pertence ao projeto
    (E1=a · mesma posse que o _pvAplicar usa). Lê o realizado já carregado (histórico completo
@@ -4257,10 +4257,10 @@ function _renderPrevLinhas(){
       const distBtn=(podeEdT&&l.ini&&l.fim)?`<button class="pvt-dist" data-li="${idx}" title="Espalha as tarefas, na ordem, pelos dias úteis da atividade"><i data-lucide="wand-2"></i> Distribuir no período</button>`:"";
       subHTML=`<div class="pvx-tarefas"><div class="pvt-h"><i data-lucide="list-checks"></i> Tarefas <span class="pvt-hint">· ordene com ↑↓ · 1ª inicia no começo da atividade · dentro de ${enc(l.ini||'?')}–${enc(l.fim||'?')}</span>${distBtn}</div>${linhasT}</div>`;
     }
-    return `<div class="pvx-row${flagged.has(idx)?" pvx-row-warn":""}">
+    return `<div class="pvx-row${flagged.has(idx)?" pvx-row-warn":""}${(!l.an||!l.slot)?" pvx-row-plano":""}">
       <div class="pvx-ord">${idx+1}</div>
-      <div class="cr-an">${enc(l.an)}</div>
-      <div>${enc(l.slot)}</div>
+      <div class="cr-an">${l.an?enc(l.an):'<span class="pvx-plano-tag" title="Linha só de plano — sem analista/slot; não vai pra grade">só plano</span>'}</div>
+      <div>${l.slot?enc(l.slot):'<span class="pvx-defina">— definir —</span>'}</div>
       <div>${enc(l.atv)}</div>
       <div class="${autoCls}"><input type="date" value="${enc(l.ini||'')}" data-idx="${idx}" class="pvx-ini" title="${l.iniManual?'Início manual (trava o encadeamento). Limpe para re-encadear.':'Início automático (encadeado). Preencha para travar.'}"></div>
       <div class="${autoFimCls}"><input type="date" value="${enc(l.fim||'')}" min="${enc(l.ini||'')}" data-idx="${idx}" class="pvx-fim" title="${l.fimManual?'Término manual (ajustado). Limpe para voltar à duração da atividade.':'Término automático (duração da atividade). Edite para ajustar os slots reais.'}"></div>
@@ -4441,8 +4441,10 @@ function _pvAplicar(p){
   if(!p||!p.nome){ alert("Salve o projeto antes de aplicar o previsto."); return; }
   _garantirHistoricoTudo().then(()=>{
     _pvRecalcChain(p);
-    const linhas=(p.previstoLinhas||[]).filter(l=>l.ini&&l.fim);
-    if(!linhas.length){ alert("Não há atividades com datas válidas para aplicar."); return; }
+    const comData=(p.previstoLinhas||[]).filter(l=>l.ini&&l.fim);
+    const linhas=comData.filter(l=>l.an&&l.slot);          // só linhas alocáveis vão pra grade
+    const soPlano=comData.length-linhas.length;            // linhas "só plano" (sem analista/slot)
+    if(!linhas.length){ alert(soPlano?("Há "+soPlano+" atividade(s) só de plano (sem analista/slot) — atribua analista e slot para poder aplicar na grade."):"Não há atividades com datas válidas para aplicar."); return; }
     const tagProj="projeto:"+p.nome;
     // Conjunto desejado de células
     const desired=new Map();   // k -> {atv, linha}
@@ -4476,8 +4478,149 @@ function _pvAplicar(p){
     let msg=`Alocações previstas aplicadas na grade de "${p.nome}":\n• ${desired.size} slot(s) previstos\n• ${realNovos} preenchido(s) no realizado (estavam livres)`;
     if(ocupadoOutro) msg+=`\n• ${ocupadoOutro} mantido(s) por já estarem ocupados por outro projeto (divergência)`;
     if(removidos) msg+=`\n• ${removidos} previsto(s) antigo(s) reconciliado(s)${esvaziados?` · ${esvaziados} realizado(s) revertido(s) a livre`:""}`;
+    if(soPlano) msg+=`\n• ${soPlano} atividade(s) só de plano ignorada(s) (sem analista/slot)`;
     alert(msg);
   });
+}
+
+/* ===================== IMPORTAÇÃO DE CRONOGRAMA (CSV · Fase 6a) =====================
+   Importa um WBS exportado de outro sistema (Atividade;Início;Término), reconstruindo a
+   hierarquia pela numeração. O usuário escolhe qual NÍVEL vira "atividade" (I1=c); os níveis
+   abaixo viram tarefas (com o caminho dos grupos no nome). Cria/casa no catálogo (I3) e gera
+   linhas "só plano" (sem analista/slot · I2=a) que NÃO vão pra grade até serem atribuídas.
+   Reimport casa por nome e atualiza datas (I4). Tudo com preview antes de confirmar (I5). */
+function _csvSplitLinha(linha){
+  const out=[]; let cur="", q=false;
+  for(let i=0;i<linha.length;i++){ const c=linha[i];
+    if(c==='"'){ if(q&&linha[i+1]==='"'){cur+='"';i++;} else q=!q; }
+    else if(c===';'&&!q){ out.push(cur); cur=""; }
+    else cur+=c;
+  }
+  out.push(cur); return out;
+}
+function _csvParse(text){
+  const t=String(text||"").replace(/^\uFEFF/,"");
+  return t.split(/\r\n|\r|\n/).filter(l=>l.trim().length).map(_csvSplitLinha).map(a=>a.map(c=>c.trim()));
+}
+function _impDataISO(s){ const m=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec((s||"").trim()); return m?`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`:""; }
+function _impLimpaNome(nome){ let s=String(nome||"").trim(); const mb=/^\[([^\]]*)\]/.exec(s); if(mb)return mb[1].trim(); return s.replace(/^\s*\d+(?:\.\d+)*\s*[-.]\s*/,"").trim()||s; }
+function _impNivel(nome){
+  const s=String(nome||"").trim();
+  if(/^\[[^\]]*\]/.test(s)) return {lv:0, kind:'PROJETO'};
+  const md=/^(\d+(?:\.\d+)+)/.exec(s); if(md) return {lv:md[1].split('.').length, kind:'GRUPO'};
+  const mi=/^(\d+)\s*[-.]\s*(.*)$/.exec(s);
+  if(mi){ const resto=mi[2]; const letras=[...resto].filter(c=>c.toLowerCase()!==c.toUpperCase());
+    if(letras.length && letras.every(c=>c===c.toUpperCase()) && resto.length>3) return {lv:1, kind:'FASE'};
+    return {lv:null, kind:'FOLHA'}; }
+  return {lv:null, kind:'FOLHA'};
+}
+// Reconstrói a árvore (lista achatada com nível, tipo, datas, ancestrais) de UM projeto.
+function _impArvore(linhasRaw){
+  const stack=[], nodes=[];
+  (linhasRaw||[]).forEach(r=>{
+    const info=_impNivel(r[0]); let lv=info.lv; const kind=info.kind;
+    if(kind==='FOLHA') lv=(stack.length?stack[stack.length-1].lv+1:1);
+    while(stack.length && stack[stack.length-1].lv>=lv) stack.pop();
+    const node={lv, kind, nome:_impLimpaNome(r[0]), ini:_impDataISO(r[1]), fim:_impDataISO(r[2]), anc:stack.map(s=>s.idx)};
+    const idx=nodes.length; nodes.push(node);
+    if(kind!=='FOLHA') stack.push({lv, idx});
+  });
+  return nodes;
+}
+// Mapeia a árvore para [{atv,ini,fim,tarefas:[{nome,ini,fim}]}] dado o nível-atividade La.
+function _impMapear(nodes, La){
+  const byIdx=i=>nodes[i], atividades=new Map();
+  const ensure=(nome,ini,fim)=>{ let a=atividades.get(nome); if(!a){ a={atv:nome,ini:ini||"",fim:fim||"",tarefas:[]}; atividades.set(nome,a);} else { if(ini&&(!a.ini||ini<a.ini))a.ini=ini; if(fim&&(!a.fim||fim>a.fim))a.fim=fim; } return a; };
+  nodes.forEach(n=>{
+    if(n.kind==='FOLHA'){
+      if(n.lv>La){
+        const ancLa=n.anc.map(byIdx).find(a=>a&&a.lv===La);
+        const atvNome=ancLa?ancLa.nome:(n.anc.length?byIdx(n.anc[n.anc.length-1]).nome:n.nome);
+        const a=ensure(atvNome, ancLa&&ancLa.ini, ancLa&&ancLa.fim);
+        const pref=n.anc.map(byIdx).filter(x=>x&&x.lv>La).map(x=>x.nome);
+        a.tarefas.push({nome:(pref.length?pref.join(" / ")+" / ":"")+n.nome, ini:n.ini, fim:n.fim});
+      } else ensure(n.nome, n.ini, n.fim);
+    } else if(n.lv===La){ ensure(n.nome, n.ini, n.fim); }
+  });
+  return [...atividades.values()];
+}
+// Aplica no projeto: cria/casa catálogo, cria/atualiza linhas só-plano (match por nome).
+function _impAplicar(p, mapeado){
+  const agora=new Date().toISOString(), who=(_currentUser&&_currentUser.email)||"import";
+  let atvCriadas=0, atvCasadas=0, tarCriadas=0, linNovas=0, linAtual=0;
+  REG.atividades=REG.atividades||[]; REG.tarefas=REG.tarefas||[]; p.previstoLinhas=p.previstoLinhas||[];
+  mapeado.forEach(m=>{
+    let a=REG.atividades.find(x=>x&&_normProj(x.nome)===_normProj(m.atv));
+    if(!a){ a={nome:m.atv, tipo:'implantacao', ativo:true, slotsNecessarios:1, etapa:'', createdAt:agora, createdBy:who, origem:'import'}; REG.atividades.push(a); atvCriadas++; }
+    else atvCasadas++;
+    const atvNome=a.nome;
+    m.tarefas.forEach(t=>{ if(!t.nome)return; const ex=REG.tarefas.find(x=>x&&x.atividade===atvNome&&_normProj(x.nome)===_normProj(t.nome)); if(!ex){ REG.tarefas.push({nome:t.nome, atividade:atvNome, ativo:true, createdAt:agora, createdBy:who, origem:'import'}); tarCriadas++; } });
+    let l=p.previstoLinhas.find(x=>x && x.atv===atvNome && (!x.an||!x.slot));
+    if(!l){ l={id:_pvNovoId(), an:"", slot:"", atv:atvNome, ini:m.ini||"", fim:m.fim||"", slots:0, iniManual:!!m.ini, fimManual:!!m.fim, tarefas:[], origemImport:true, criadoEm:agora, criadoPor:who}; p.previstoLinhas.push(l); linNovas++; }
+    else { if(m.ini)l.ini=m.ini; if(m.fim)l.fim=m.fim; l.iniManual=!!l.ini; l.fimManual=!!l.fim; l.origemImport=true; linAtual++; }
+    l.tarefas=Array.isArray(l.tarefas)?l.tarefas:[];
+    m.tarefas.forEach(t=>{ if(!t.nome)return; let s=l.tarefas.find(x=>x&&x.nome===t.nome); if(!s){ s={nome:t.nome, ini:"", fim:""}; l.tarefas.push(s); } if(t.ini)s.ini=t.ini; if(t.fim)s.fim=t.fim; });
+  });
+  _pvRecalcChain(p); saveReg();
+  return {atividades:mapeado.length, atvCriadas, atvCasadas, tarCriadas, linNovas, linAtual};
+}
+let _impDados=null;
+function abrirImportCronograma(){
+  if(!canEditAction("cronograma")){ alert("Sem permissão de edição no Cronograma."); return; }
+  const p=_cronProjNome?_cronProjetos().find(x=>x.nome===_cronProjNome):null;
+  if(!p){ alert("Selecione um projeto no Cronograma antes de importar."); return; }
+  _impDados=null;
+  const old=el("impOverlay"); if(old)old.remove();
+  const ov=document.createElement("div"); ov.id="impOverlay"; ov.className="imp-overlay";
+  ov.innerHTML=`<div class="imp-modal">
+    <div class="imp-head"><div><b>Importar cronograma (CSV)</b><div class="imp-sub">Destino: <b>${enc(p.nome)}</b></div></div><button class="imp-x" id="impClose">×</button></div>
+    <div class="imp-body">
+      <label class="imp-file"><input type="file" id="impFile" accept=".csv,text/csv"><span><i data-lucide="upload"></i> Selecionar .csv</span></label>
+      <span class="imp-fname" id="impFname">nenhum arquivo</span>
+      <div id="impAviso"></div>
+      <div id="impConfig" style="display:none">
+        <div class="imp-row"><label>Nível que vira <b>atividade</b></label> <select id="impNivel"></select> <span class="imp-counts" id="impCounts"></span></div>
+        <div class="imp-legend"><span class="imp-k imp-n-atv">atividade</span><span class="imp-k imp-n-tar">tarefa</span><span class="imp-k imp-n-grp">estrutura</span></div>
+        <div class="imp-tree" id="impTree"></div>
+      </div>
+    </div>
+    <div class="imp-foot"><button class="btn" id="impCancel">Cancelar</button><button class="btn primary" id="impDo" disabled><i data-lucide="download"></i> Importar</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  el("impClose").onclick=close; el("impCancel").onclick=close;
+  ov.addEventListener("click",e=>{ if(e.target===ov)close(); });
+  el("impFile").addEventListener("change",ev=>{ const f=ev.target.files&&ev.target.files[0]; if(!f)return; el("impFname").textContent=f.name; const rd=new FileReader(); rd.onload=()=>{ try{ _impCarregar(String(rd.result||""), p); }catch(e){ alert("Falha ao ler o CSV: "+(e&&e.message||e)); } }; rd.readAsText(f,"UTF-8"); });
+  el("impDo").addEventListener("click",()=>{ if(!_impDados)return; const La=+el("impNivel").value; const mapeado=_impMapear(_impDados.nodes, La); if(!mapeado.length){ alert("Nada para importar nesse nível."); return; } const r=_impAplicar(p, mapeado); close(); renderCronograma(); alert(`Importado em "${p.nome}":\n• ${r.atividades} atividade(s) (${r.atvCriadas} criada(s), ${r.atvCasadas} casada(s))\n• ${r.tarCriadas} tarefa(s) nova(s) no catálogo\n• ${r.linNovas} linha(s) nova(s) · ${r.linAtual} atualizada(s)\n\nAs linhas entraram como “só plano” (sem analista/slot) — atribua analista e slot para aplicar na grade.`); });
+  lucideRefresh();
+}
+function _impCarregar(text, p){
+  const rows=_csvParse(text); if(rows.length<2){ alert("CSV vazio ou sem dados."); return; }
+  const data=rows.slice(1), buckets=[]; let cur=null;
+  data.forEach(r=>{ const info=_impNivel(r[0]); if(info.kind==='PROJETO'){ cur={nome:_impLimpaNome(r[0]), ini:_impDataISO(r[1]), fim:_impDataISO(r[2]), linhas:[]}; buckets.push(cur); } else { if(!cur){ cur={nome:"(sem cabeçalho)", linhas:[]}; buckets.push(cur); } cur.linhas.push(r); } });
+  if(!buckets.length){ alert("Não encontrei atividades no CSV."); return; }
+  const bk=buckets.find(b=>_normProj(b.nome)===_normProj(p.nome)) || buckets.find(b=>_normProj(p.nome).includes(_normProj(b.nome))||_normProj(b.nome).includes(_normProj(p.nome))) || buckets[0];
+  const nodes=_impArvore(bk.linhas), maxLv=nodes.reduce((m,n)=>Math.max(m,n.lv),1);
+  _impDados={nodes, bucket:bk, maxLv};
+  let opts=""; for(let lv=1; lv<=Math.max(1,maxLv); lv++) opts+=`<option value="${lv}" ${lv===Math.min(2,maxLv)?"selected":""}>Nível ${lv}</option>`;
+  el("impNivel").innerHTML=opts;
+  el("impAviso").innerHTML=(_normProj(bk.nome)!==_normProj(p.nome))?`<div class="imp-warn">O CSV identifica o projeto “<b>${enc(bk.nome)}</b>”, diferente do destino “<b>${enc(p.nome)}</b>”. A importação vai para o destino selecionado.</div>`:"";
+  el("impConfig").style.display=""; el("impDo").disabled=false;
+  el("impNivel").onchange=_impRenderPreview;
+  _impRenderPreview();
+}
+function _impRenderPreview(){
+  if(!_impDados)return;
+  const La=+el("impNivel").value, mapeado=_impMapear(_impDados.nodes, La);
+  const nTar=mapeado.reduce((s,m)=>s+m.tarefas.length,0);
+  el("impCounts").innerHTML=`→ <b>${mapeado.length}</b> atividade(s), <b>${nTar}</b> tarefa(s)`;
+  el("impTree").innerHTML=_impDados.nodes.map(n=>{
+    const isAtv=(n.kind!=='FOLHA'&&n.lv===La)||(n.kind==='FOLHA'&&n.lv<=La);
+    const isTar=(n.kind==='FOLHA'&&n.lv>La);
+    const cls=isAtv?"imp-n-atv":(isTar?"imp-n-tar":"imp-n-grp");
+    const dt=(n.ini&&n.fim)?`<span class="imp-dt">${fmtDM(parseISO(n.ini))}→${fmtDM(parseISO(n.fim))}</span>`:`<span class="imp-dt imp-nodt">sem data</span>`;
+    return `<div class="imp-n ${cls}" style="padding-left:${8+n.lv*16}px">${enc(n.nome)} ${dt}</div>`;
+  }).join("");
 }
 
 /* ===================== CRONOGRAMA DE PROJETOS (tela dedicada · Fase 1) =====================
@@ -4512,7 +4655,7 @@ function renderCronograma(){
   const toggleHTML=p?`<div class="cron-viewtoggle" role="tablist" aria-label="Modo de visualização">
       <button class="cvt-btn ${!isGantt?'on':''}" id="cronViewLista" role="tab" aria-selected="${!isGantt}"><i data-lucide="list"></i> Lista</button>
       <button class="cvt-btn ${isGantt?'on':''}" id="cronViewGantt" role="tab" aria-selected="${isGantt}"><i data-lucide="gantt-chart"></i> Gantt</button>
-    </div>`:"";
+    </div>${canEditAction("cronograma")?`<button class="cvt-btn cron-import" id="cronImportBtn" title="Importar cronograma de um CSV"><i data-lucide="upload"></i> Importar CSV</button>`:""}`:"";
   const corpo=p
     ? (isGantt?_cronGanttHTML(p):_previstoTabHTML(p))
     : `<div class="hint" style="padding:16px">Escolha um projeto acima para ver e editar o cronograma.</div>`;
@@ -4539,6 +4682,7 @@ function renderCronograma(){
     if(_pvCongelarBaseline(p,rot)){ _cronCompareBaseline=true; renderCronograma(); }
   });
   if(bCmp)bCmp.addEventListener("click",()=>{ _cronCompareBaseline=!_cronCompareBaseline; renderCronograma(); });
+  const bImp=el("cronImportBtn"); if(bImp)bImp.addEventListener("click",abrirImportCronograma);
   if(p && !isGantt) _bindCronograma(p);
   if(p && isGantt && !_cronEvolReady){
     _garantirHistoricoTudo().then(()=>{ _cronEvolReady=true; if(_cronView==="gantt"&&_cronProjNome===p.nome) renderCronograma(); });
@@ -4649,8 +4793,9 @@ function _cronGanttHTML(p){
     const nLanes=lanes.length;
     const rowH=Math.max(38,28+nLanes*12);
     const barStyle=nLanes?`top:6px;transform:none`:`top:50%;transform:translateY(-50%)`;
-    // evolução por atividade (Fase 3b)
-    const prog=evolReady?_pvProgressoCelulas(_pvExpandir(l), p.nome):null;
+    // evolução por atividade (Fase 3b) — só para linhas alocáveis
+    const planoOnly=(!l.an||!l.slot);
+    const prog=(evolReady && !planoOnly)?_pvProgressoCelulas(_pvExpandir(l), p.nome):null;
     const atrasado=evolReady && prog && l.fim<hojeISO && prog.frac<1;
     const fill=prog?`<div class="gantt-fill" style="width:${Math.round(prog.frac*100)}%"></div>`:"";
     const pctTxt=prog?` · ${Math.round(prog.frac*100)}% (${prog.real}/${prog.total} slot)`:"";
@@ -4675,7 +4820,7 @@ function _cronGanttHTML(p){
       }
     }
     return `<div class="gantt-row" style="min-height:${rowH}px">
-      <div class="gantt-rlbl" style="width:${labelW}px"><div class="grl-top"><span class="grl-ord">${idx+1}</span><span class="grl-atv" title="${enc(l.atv)}">${enc(l.atv)}</span>${atrasado?`<span class="grl-atraso" title="Vencida e não concluída">atrasada</span>`:""}${devBadge}</div><div class="grl-sub">${enc(l.an)} · ${enc(l.slot)}${prog?` · <span class="grl-pct">${Math.round(prog.frac*100)}%</span>`:(kTot?` · <span class="grl-tar">${kData}/${kTot} tarefa(s)</span>`:"")}</div></div>
+      <div class="gantt-rlbl" style="width:${labelW}px"><div class="grl-top"><span class="grl-ord">${idx+1}</span><span class="grl-atv" title="${enc(l.atv)}">${enc(l.atv)}</span>${atrasado?`<span class="grl-atraso" title="Vencida e não concluída">atrasada</span>`:""}${devBadge}</div><div class="grl-sub">${planoOnly?'<span class="grl-plano">só plano</span>':`${enc(l.an)} · ${enc(l.slot)}`}${prog?` · <span class="grl-pct">${Math.round(prog.frac*100)}%</span>`:(kTot?` · <span class="grl-tar">${kData}/${kTot} tarefa(s)</span>`:"")}</div></div>
       <div class="gantt-track" style="width:${timelineW}px;height:${rowH}px">
         ${ghost}
         <div class="gantt-bar${atrasado?" is-atrasado":""}" style="left:${left}px;width:${width}px;background:${col};${barStyle}" title="${tip}${devTip}">${fill}<span class="gbar-lbl">${enc(l.atv)}</span></div>
