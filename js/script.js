@@ -1520,7 +1520,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.74.1";
+const APP_VERSION = "1.75.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -4122,36 +4122,79 @@ function _previstoTabHTML(p){
    na própria linha: l.tarefas=[{nome,ini,fim}] (esparso). 1ª tarefa começa no início da
    atividade; as demais são manuais (T1=C). Várias tarefas podem cobrir o mesmo dia (T3).
    Nada é carimbado no PREV/DATA: a tarefa do dia é DERIVADA na consulta do slot (T2=A). */
-function _tarefasLinha(l){
+// Ordem POR LINHA (Fase 5 · P2.2=a): a sequência das tarefas é específica do projeto.
+// Vive na ordem do array l.tarefas; o catálogo só define QUAIS tarefas existem (e a ordem
+// inicial). Tarefas do catálogo ainda sem entrada entram no fim; entradas cujo catálogo
+// sumiu/inativou são descartadas. Não muta o objeto.
+function _tarefasOrdenadas(l){
   const cat=tarefasDaAtividade(l&&l.atv||"");
+  const catNomes=new Set(cat.map(t=>t.nome));
   const stored=Array.isArray(l&&l.tarefas)?l.tarefas:[];
+  const out=[], seen=new Set();
+  stored.forEach(s=>{ if(s&&catNomes.has(s.nome)&&!seen.has(s.nome)){ out.push({nome:s.nome, ini:s.ini||"", fim:s.fim||""}); seen.add(s.nome); } });
+  cat.forEach(t=>{ if(!seen.has(t.nome)){ out.push({nome:t.nome, ini:"", fim:""}); seen.add(t.nome); } });
+  return out;
+}
+function _tarefasLinha(l){
+  const ord=_tarefasOrdenadas(l);
   const win0=l&&l.ini||"", win1=l&&l.fim||"";
   const clamp=iso=>{ if(!iso)return ""; let v=iso; if(win0&&v<win0)v=win0; if(win1&&v>win1)v=win1; return v; };
-  return cat.map((t,j)=>{
-    const s=stored.find(x=>x&&x.nome===t.nome)||null;
-    const rawIni=(s&&s.ini)?s.ini:(j===0?win0:"");   // 1ª tarefa: default = início da atividade
-    const rawFim=(s&&s.fim)?s.fim:"";
+  return ord.map((s,j)=>{
+    const rawIni=s.ini?s.ini:(j===0?win0:"");   // 1ª (na ordem da linha): default = início da atividade
+    const rawFim=s.fim?s.fim:"";
     const ini=clamp(rawIni), fim=clamp(rawFim);
     const foraJanela=!!((rawIni&&rawIni!==ini)||(rawFim&&rawFim!==fim)||(ini&&fim&&ini>fim));
     const complete=!!(ini&&fim&&ini<=fim);
-    return {nome:t.nome, num:j+1, ini, fim, complete, foraJanela};
+    return {nome:s.nome, num:j+1, ini, fim, complete, foraJanela};
   });
 }
-// Upsert de data de tarefa na linha (clamp à janela da atividade). Tarefas são metadados
-// de planejamento (Gantt/consulta): NÃO afetam o que já foi aplicado na grade.
+// Materializa l.tarefas como a lista ORDENADA completa (preserva datas). Usado antes de
+// reordenar/distribuir/datar para a ordem ser determinística.
+function _materializarTarefas(l){ l.tarefas=_tarefasOrdenadas(l); return l.tarefas; }
+// Upsert de data de tarefa na linha (clamp à janela). Metadado de planejamento (Gantt/consulta):
+// NÃO afeta o que já foi aplicado na grade.
 function _pvSetTarefaData(lineIdx, nome, campo, val){
   const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
   _pvRecalcChain(p);
   const l=(p.previstoLinhas||[])[lineIdx]; if(!l)return;
-  if(!Array.isArray(l.tarefas)) l.tarefas=[];
-  let s=l.tarefas.find(x=>x&&x.nome===nome);
-  if(!s){ s={nome, ini:"", fim:""}; l.tarefas.push(s); }
+  const arr=_materializarTarefas(l);
+  let s=arr.find(x=>x&&x.nome===nome); if(!s){ s={nome, ini:"", fim:""}; arr.push(s); }
   let v=(val||"").trim();
   if(v){ if(l.ini&&v<l.ini)v=l.ini; if(l.fim&&v>l.fim)v=l.fim; }   // recorta à janela
   if(campo==="ini") s.ini=v; else s.fim=v;
-  const cat=tarefasDaAtividade(l.atv||""); const isFirst=cat.length&&cat[0].nome===nome;
+  const isFirst=arr.length&&arr[0].nome===nome;
   if(campo==="fim" && isFirst && !s.ini && l.ini) s.ini=l.ini;     // baka o default da 1ª ao datar o fim
-  if(!s.ini && !s.fim) l.tarefas=l.tarefas.filter(x=>x!==s);       // limpou ambos → remove (mantém esparso)
+  saveReg(); _renderPrevLinhas();
+}
+// Sobe/desce a tarefa na sequência da linha (Fase 5).
+function _pvTarefasMover(lineIdx, nome, dir){
+  const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
+  _pvRecalcChain(p);
+  const l=(p.previstoLinhas||[])[lineIdx]; if(!l)return;
+  const arr=_materializarTarefas(l);
+  const i=arr.findIndex(x=>x&&x.nome===nome); if(i<0)return;
+  const j=i+(dir<0?-1:1); if(j<0||j>=arr.length)return;
+  const tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp;
+  saveReg(); _renderPrevLinhas();
+}
+// Distribui as tarefas (na ordem atual) ao longo dos dias úteis da janela da atividade,
+// partição sequencial e o mais uniforme possível. Sobreposição no mesmo dia (T3) fica
+// disponível por ajuste manual depois.
+function _pvDistribuirTarefas(lineIdx){
+  const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
+  _pvRecalcChain(p);
+  const l=(p.previstoLinhas||[])[lineIdx]; if(!l||!l.ini||!l.fim)return;
+  const arr=_materializarTarefas(l); if(!arr.length)return;
+  const dias=_diasUteisEntre(l.ini,l.fim), D=dias.length, N=arr.length;
+  if(!D)return;
+  let pos=0;
+  for(let i=0;i<N;i++){
+    if(pos>=D){ for(let q=i;q<N;q++){ arr[q].ini=dias[D-1]; arr[q].fim=dias[D-1]; } break; }
+    const take=Math.max(1, Math.round((D-pos)/(N-i)));
+    const fimIdx=Math.min(D-1, pos+take-1);
+    arr[i].ini=dias[pos]; arr[i].fim=dias[fimIdx];
+    pos=fimIdx+1;
+  }
   saveReg(); _renderPrevLinhas();
 }
 // Tarefas previstas para um (analista, slot, dia) de um projeto — derivado do cronograma.
@@ -4195,11 +4238,12 @@ function _renderPrevLinhas(){
     const podeEdT=canEditAction("cronograma");
     let subHTML="";
     if(tl.length){
-      const linhasT=tl.map(t=>{
+      const linhasT=tl.map((t,tj)=>{
         const flag=t.foraJanela?`<span class="pvt-flag" title="Fora da janela da atividade — ajuste as datas">!</span>`:"";
         if(podeEdT){
           return `<div class="pvt-row${t.complete?"":" pvt-inc"}">
             <span class="pvt-num">${idx+1}.${t.num}</span>
+            <span class="pvt-move"><button class="pvt-up" data-li="${idx}" data-tn="${enc(t.nome)}" title="Subir"${tj===0?" disabled":""}>↑</button><button class="pvt-dn" data-li="${idx}" data-tn="${enc(t.nome)}" title="Descer"${tj===tl.length-1?" disabled":""}>↓</button></span>
             <span class="pvt-nm" title="${enc(t.nome)}">${enc(t.nome)}</span>
             <input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||'')}" max="${enc(l.fim||'')}" title="Início da tarefa">
             <span class="pvt-arr">→</span>
@@ -4210,7 +4254,8 @@ function _renderPrevLinhas(){
         const dt=t.complete?`${fmtDM(parseISO(t.ini))}→${fmtDM(parseISO(t.fim))}`:"sem data";
         return `<div class="pvt-row pvt-ro"><span class="pvt-num">${idx+1}.${t.num}</span><span class="pvt-nm">${enc(t.nome)}</span><span class="pvt-dtxt">${dt}</span>${flag}</div>`;
       }).join("");
-      subHTML=`<div class="pvx-tarefas"><div class="pvt-h"><i data-lucide="list-checks"></i> Tarefas <span class="pvt-hint">· 1ª inicia no começo da atividade · demais a preencher · dentro de ${enc(l.ini||'?')}–${enc(l.fim||'?')}</span></div>${linhasT}</div>`;
+      const distBtn=(podeEdT&&l.ini&&l.fim)?`<button class="pvt-dist" data-li="${idx}" title="Espalha as tarefas, na ordem, pelos dias úteis da atividade"><i data-lucide="wand-2"></i> Distribuir no período</button>`:"";
+      subHTML=`<div class="pvx-tarefas"><div class="pvt-h"><i data-lucide="list-checks"></i> Tarefas <span class="pvt-hint">· ordene com ↑↓ · 1ª inicia no começo da atividade · dentro de ${enc(l.ini||'?')}–${enc(l.fim||'?')}</span>${distBtn}</div>${linhasT}</div>`;
     }
     return `<div class="pvx-row${flagged.has(idx)?" pvx-row-warn":""}">
       <div class="pvx-ord">${idx+1}</div>
@@ -4232,6 +4277,9 @@ function _renderPrevLinhas(){
   host.querySelectorAll(".pvx-fim").forEach(inp=>inp.addEventListener("change",()=>_pvSetFim(+inp.dataset.idx,inp.value)));
   host.querySelectorAll(".pvt-ini").forEach(inp=>inp.addEventListener("change",()=>_pvSetTarefaData(+inp.dataset.li,dec(inp.dataset.tn),"ini",inp.value)));
   host.querySelectorAll(".pvt-fim").forEach(inp=>inp.addEventListener("change",()=>_pvSetTarefaData(+inp.dataset.li,dec(inp.dataset.tn),"fim",inp.value)));
+  host.querySelectorAll(".pvt-up").forEach(b=>b.addEventListener("click",()=>_pvTarefasMover(+b.dataset.li,dec(b.dataset.tn),-1)));
+  host.querySelectorAll(".pvt-dn").forEach(b=>b.addEventListener("click",()=>_pvTarefasMover(+b.dataset.li,dec(b.dataset.tn),1)));
+  host.querySelectorAll(".pvt-dist").forEach(b=>b.addEventListener("click",()=>_pvDistribuirTarefas(+b.dataset.li)));
   const aplicado=p&&p.previstoAplicadoEm;
   const statusHTML=aplicado?`<span class="pvx-status ok">Aplicado em ${enc(String(aplicado).slice(0,16).replace("T"," "))}</span>`:`<span class="pvx-status pend">Pendente de aplicação</span>`;
   const terminoTxt=termino?`${fmtDM(parseISO(termino))}/${parseISO(termino).getFullYear()}`:"—";
