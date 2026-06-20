@@ -3274,10 +3274,24 @@ function openAtasReport(){
   const o=el("atasOverlay"); if(o)o.classList.add("open");
   try{ aplicarDatasPadrao("atasDataInicio","atasDataFim"); }catch(e){}
   _atasFiltro={cliente:"todos",analista:"todos",gp:"todos",status:"todos"};
-  aplicarPeriodoAtas();
+  _atasLinhas=[];
+  const fh=el("atasFiltros"); if(fh) fh.innerHTML="";   // sem filtros de escopo até a 1ª carga
+  const body=el("atasBody");
+  if(body) body.innerHTML=_htmlSobDemanda("Escolha o período e clique em <b>Aplicar Filtro</b> para carregar somente as atas e alocações do período selecionado.");
   lucideRefresh();
 }
 function closeAtasReport(){ const o=el("atasOverlay"); if(o)o.classList.remove("open"); }
+
+// Reimpressão a partir do relatório de Atas: 2ª via de ata JÁ impressa.
+// NÃO grava nem altera nada — apenas re-renderiza o documento e imprime.
+function reimprimirAtaRelatorio(slotKey){
+  if(!canViewAction("atas")){ alert("Você não tem acesso às Atas."); return; }
+  const l=_atasLinhas.find(x=>x.slotKey===slotKey);
+  const ata=(l&&l.ata)||_atasCache[slotKey];
+  if(!ata){ alert("Ata não encontrada para reimpressão."); return; }
+  if(!ata.impressa){ alert("Só é possível reimprimir atas já impressas."); return; }
+  _dispararImpressao(ata);
+}
 
 function _mesesAtas(ini,fim){
   const set=[]; let a=new Date(ini+"T00:00:00"); const f=new Date(fim+"T00:00:00");
@@ -3377,6 +3391,10 @@ function renderAtasReport(){
     <div class="kpi-group-title"><span class="ico">${icone}</span>${titulo}</div>
     ${rows.length?`<table class="rep-table"><thead><tr><th>Nome</th><th class="num">Pendentes</th></tr></thead><tbody>${rows.map(r=>`<tr><td>${enc(r.nome)}</td><td class="num">${r.n}</td></tr>`).join("")}</tbody></table>`:`<div class="rep-empty">Sem pendências.</div>`}</div>`;
   const pill=s=>{ const cls={pendente:"sp-pend",gerada:"sp-ger",impressa:"sp-imp",enviada:"sp-env"}[s]||""; const lbl={pendente:"Pendente",gerada:"Gerada",impressa:"Impressa",enviada:"Enviada"}[s]||s; return `<span class="atas-pill ${cls}">${lbl}</span>`; };
+  const reimp=l=>{
+    if(l.ata && l.ata.impressa) return `<button class="btn small atas-reimprimir" data-slotkey="${enc(l.slotKey)}" title="Reimprimir 2ª via (não altera a ata)"><i data-lucide="printer"></i> Reimprimir</button>`;
+    return `<span class="atas-reimp-na">—</span>`;
+  };
   const rows=linhas.map(l=>{ const d=parseISO(l.iso); return `<tr>
       <td class="mono">${enc(fmtDM(d))}/${d.getFullYear()}<div class="sub">${enc(l.slot)}</div></td>
       <td>${enc(l.analista)}</td>
@@ -3384,6 +3402,7 @@ function renderAtasReport(){
       <td>${enc(l.atividade||"—")}</td>
       <td>${enc(l.gp||"—")}</td>
       <td>${pill(l.status)}${l.obrigatoria?"":' <span class="atas-extra" title="Atividade não exige ata atualmente">extra</span>'}</td>
+      <td class="atas-reimp-cell">${reimp(l)}</td>
     </tr>`; }).join("");
   body.innerHTML=`
     <div class="kpi-group-title"><span class="ico">📋</span>Indicadores do período</div>
@@ -3402,7 +3421,7 @@ function renderAtasReport(){
       ${miniTab("GPs","🧭",rank("gp"))}
     </div>
     <div class="kpi-group-title"><span class="ico">🗂️</span>Atas do período <span style="font-size:11px;color:var(--fn-faint);font-weight:600;text-transform:none;letter-spacing:normal;margin-left:auto">${linhas.length} registro(s)</span></div>
-    ${linhas.length?`<table class="rep-table"><thead><tr><th>Data</th><th>Analista</th><th>Cliente</th><th>Atividade</th><th>GP</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`:`<div class="rep-empty" style="padding:30px">Nenhuma ata ou obrigação de ata no período/escopo selecionado.</div>`}`;
+    ${linhas.length?`<table class="rep-table"><thead><tr><th>Data</th><th>Analista</th><th>Cliente</th><th>Atividade</th><th>GP</th><th>Status</th><th>Reimprimir</th></tr></thead><tbody>${rows}</tbody></table>`:`<div class="rep-empty" style="padding:30px">Nenhuma ata ou obrigação de ata no período/escopo selecionado.</div>`}`;
   lucideRefresh();
 }
 
@@ -10291,6 +10310,7 @@ function bind(){
   { const ao=el("ataOverlay");if(ao) ao.addEventListener("click",e=>{if(e.target.id==="ataOverlay")closeAta();}); }
   { const ac=el("atasClose"); if(ac) ac.addEventListener("click",closeAtasReport); }
   { const aa=el("atasAplicar"); if(aa) aa.addEventListener("click",aplicarPeriodoAtas); }
+  { const ab=el("atasBody"); if(ab) ab.addEventListener("click",e=>{ const b=e.target.closest&&e.target.closest(".atas-reimprimir"); if(!b)return; const sk=b.dataset.slotkey||""; if(sk) reimprimirAtaRelatorio(sk); }); }
   { const ao2=el("atasOverlay");if(ao2) ao2.addEventListener("click",e=>{if(e.target.id==="atasOverlay")closeAtasReport();}); }
   // Cronograma de Projetos
   { const cc=el("cronogramaClose"); if(cc) cc.addEventListener("click",closeCronograma); }
