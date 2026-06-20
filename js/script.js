@@ -1520,7 +1520,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.81.0";
+const APP_VERSION = "1.82.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -4144,7 +4144,9 @@ function _tarefasOrdenadas(l){
   const catNomes=new Set(cat.map(t=>t.nome));
   const stored=Array.isArray(l&&l.tarefas)?l.tarefas:[];
   const out=[], seen=new Set();
-  stored.forEach(s=>{ if(s&&catNomes.has(s.nome)&&!seen.has(s.nome)){ out.push({nome:s.nome, ini:s.ini||"", fim:s.fim||""}); seen.add(s.nome); } });
+  // mantém tarefas do catálogo E as incluídas manualmente no projeto (manual:true), mesmo que
+  // não estejam no catálogo da atividade — permite "incluir tarefa avulsa" por projeto.
+  stored.forEach(s=>{ if(s&&(catNomes.has(s.nome)||s.manual)&&!seen.has(s.nome)){ const o={nome:s.nome, ini:s.ini||"", fim:s.fim||""}; if(s.manual)o.manual=true; out.push(o); seen.add(s.nome); } });
   cat.forEach(t=>{ if(!seen.has(t.nome)){ out.push({nome:t.nome, ini:"", fim:""}); seen.add(t.nome); } });
   return out;
 }
@@ -4158,7 +4160,7 @@ function _tarefasLinha(l){
     const ini=clamp(rawIni), fim=clamp(rawFim);
     const foraJanela=!!((rawIni&&rawIni!==ini)||(rawFim&&rawFim!==fim)||(ini&&fim&&ini>fim));
     const complete=!!(ini&&fim&&ini<=fim);
-    return {nome:s.nome, num:j+1, ini, fim, complete, foraJanela};
+    return {nome:s.nome, num:j+1, ini, fim, complete, foraJanela, manual:!!s.manual};
   });
 }
 // Materializa l.tarefas como a lista ORDENADA completa (preserva datas). Usado antes de
@@ -4210,8 +4212,46 @@ function _pvDistribuirTarefas(lineIdx){
   }
   saveReg(); _cronRefresh();
 }
-// Tarefas previstas para um (analista, slot, dia) de um projeto — derivado do cronograma.
-// Usado SÓ na consulta do slot; nunca na grade.
+// Inclui uma tarefa AVULSA numa atividade do cronograma (Fase 6 · por projeto). A tarefa é
+// marcada manual:true e persiste na linha mesmo sem estar no catálogo da atividade — o catálogo
+// segue como facilitador (default), não como regra fixa. Não cadastra no catálogo global.
+function _pvIncluirTarefa(lineId, nome){
+  const p=_pvLiveProj(); if(!p||!canEditAction("cronograma"))return false;
+  nome=(nome||"").trim(); if(!nome){ alert("Informe o nome da tarefa."); return false; }
+  const l=(p.previstoLinhas||[]).find(x=>x&&x.id===lineId); if(!l){ alert("Selecione a atividade do cronograma que receberá a tarefa."); return false; }
+  const arr=_materializarTarefas(l);
+  if(arr.some(t=>t&&_normProj(t.nome)===_normProj(nome))){ alert("Essa tarefa já está nessa atividade."); return false; }
+  arr.push({nome, ini:"", fim:"", manual:true});
+  if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
+  saveReg(); _cronRefresh(); return true;
+}
+// Remove uma tarefa avulsa (manual) de uma linha. Tarefas do catálogo não são removíveis aqui
+// (voltariam pelo catálogo) — só as incluídas manualmente.
+function _pvRemoverTarefa(lineIdx, nome){
+  const p=_pvLiveProj(); if(!p||!canEditAction("cronograma"))return;
+  const l=(p.previstoLinhas||[])[lineIdx]; if(!l)return;
+  const arr=_materializarTarefas(l);
+  l.tarefas=arr.filter(t=>!(t&&t.nome===nome && t.manual));
+  if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
+  saveReg(); _cronRefresh();
+}
+// Barra "Incluir tarefa": escolhe a atividade do cronograma (linha) + nome da tarefa (datalist
+// com o catálogo, permitindo digitar uma nova). Reconstruída a cada render para refletir as linhas.
+function _pvInclTarefaBar(p){
+  if(!canEditAction("cronograma")) return "";
+  const linhas=(p&&p.previstoLinhas)||[]; if(!linhas.length) return "";
+  const opts=linhas.map((l,i)=>`<option value="${enc(l.id)}">${i+1}. ${enc(l.atv||'(sem atividade)')}${(l.an||l.slot)?` · ${enc(l.an||'só plano')}/${enc(l.slot||'—')}`:''}</option>`).join("");
+  const cat=(REG.tarefas||[]).filter(t=>t&&t.ativo!==false&&t.nome);
+  const nomes=Array.from(new Set(cat.map(t=>t.nome))).sort((a,b)=>a.localeCompare(b,"pt"));
+  const dl=nomes.map(n=>`<option value="${enc(n)}"></option>`).join("");
+  return `<div class="pv-inclt">
+    <span class="pv-inclt-lb"><i data-lucide="list-plus"></i> Incluir tarefa</span>
+    <select id="pvtAtivSel" title="Atividade do cronograma que receberá a tarefa">${opts}</select>
+    <input id="pvtNome" list="pvtCatList" placeholder="Selecionar do catálogo ou digitar uma nova…" autocomplete="off">
+    <datalist id="pvtCatList">${dl}</datalist>
+    <button class="btn" id="pvtAddBtn"><i data-lucide="plus"></i> Incluir</button>
+  </div>`;
+}
 function _tarefasPrevistasNoSlot(cli, nome, slot, iso){
   if(!cli||cli==="—")return [];
   const p=(REG.projetos||[]).find(x=>x&&x.nome===cli);
@@ -4260,7 +4300,7 @@ function _renderPrevLinhas(){
           return `<div class="pvt-row${t.complete?"":" pvt-inc"}">
             <div class="pvt-top"><span class="pvt-num">${idx+1}.${t.num}</span>
               <span class="pvt-move"><button class="pvt-up" data-li="${idx}" data-tn="${enc(t.nome)}" title="Subir"${tj===0?" disabled":""}>↑</button><button class="pvt-dn" data-li="${idx}" data-tn="${enc(t.nome)}" title="Descer"${tj===tl.length-1?" disabled":""}>↓</button></span>
-              <span class="pvt-nm" title="${enc(t.nome)}">${enc(t.nome)}</span>${flag}</div>
+              <span class="pvt-nm" title="${enc(t.nome)}">${enc(t.nome)}</span>${flag}${t.manual?`<span class="pvt-tagm" title="Tarefa incluída neste projeto (não vem do catálogo)">avulsa</span><button class="pvt-del" data-li="${idx}" data-tn="${enc(t.nome)}" title="Remover tarefa avulsa">×</button>`:""}</div>
             <div class="pvt-dates">
               <label class="pvt-dt"><span>Início</span><input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||'')}" max="${enc(l.fim||'')}"></label>
               <span class="pvt-arr">→</span>
@@ -4293,7 +4333,9 @@ function _renderPrevLinhas(){
       <button class="pvx-del" data-id="${enc(l.id)}">Remover</button>
     </div>${subHTML}`;
   }).join("");
-  host.innerHTML=head+rows;
+  host.innerHTML=_pvInclTarefaBar(p)+head+rows;
+  { const ab=el("pvtAddBtn"); if(ab)ab.addEventListener("click",()=>{ const sel=el("pvtAtivSel"), nm=el("pvtNome"); if(!sel||!nm)return; if(_pvIncluirTarefa(sel.value, nm.value)){ /* re-render limpa o campo */ } });
+    const nm=el("pvtNome"); if(nm)nm.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); const sel=el("pvtAtivSel"); if(sel)_pvIncluirTarefa(sel.value, nm.value); } }); }
   host.querySelectorAll(".pvx-del").forEach(b=>b.addEventListener("click",()=>_pvRemoverLinha(b.dataset.id)));
   host.querySelectorAll(".pvx-up").forEach(b=>b.addEventListener("click",()=>_pvMover(b.dataset.id,-1)));
   host.querySelectorAll(".pvx-dn").forEach(b=>b.addEventListener("click",()=>_pvMover(b.dataset.id,1)));
@@ -4306,6 +4348,7 @@ function _renderPrevLinhas(){
   host.querySelectorAll(".pvt-up").forEach(b=>b.addEventListener("click",()=>_pvTarefasMover(+b.dataset.li,dec(b.dataset.tn),-1)));
   host.querySelectorAll(".pvt-dn").forEach(b=>b.addEventListener("click",()=>_pvTarefasMover(+b.dataset.li,dec(b.dataset.tn),1)));
   host.querySelectorAll(".pvt-dist").forEach(b=>b.addEventListener("click",()=>_pvDistribuirTarefas(+b.dataset.li)));
+  host.querySelectorAll(".pvt-del").forEach(b=>b.addEventListener("click",()=>_pvRemoverTarefa(+b.dataset.li,dec(b.dataset.tn))));
   const aplicado=p&&p.previstoAplicadoEm;
   const statusHTML=aplicado?`<span class="pvx-status ok">Aplicado em ${enc(String(aplicado).slice(0,16).replace("T"," "))}</span>`:`<span class="pvx-status pend">Pendente de aplicação</span>`;
   const terminoTxt=termino?`${fmtDM(parseISO(termino))}/${parseISO(termino).getFullYear()}`:"—";
