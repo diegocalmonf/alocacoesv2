@@ -334,6 +334,10 @@ td.cell.locked,td.gcell.locked{cursor:not-allowed}
 #atasBody .rep-table td .sub{font-size:11px;color:var(--muted)}
 #atasBody .rep-table th{cursor:default}
 .atas-pill{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:700;white-space:nowrap}
+.atas-reimp-cell{white-space:nowrap}
+.atas-reimp-na{color:var(--faint)}
+.atas-reimprimir{display:inline-flex;align-items:center;gap:5px}
+.atas-reimprimir i{width:13px;height:13px}
 .atas-pill.sp-pend{background:#fbe3e0;color:#b3261e}
 .atas-pill.sp-ger{background:#fdf0d8;color:#9a6a12}
 .atas-pill.sp-imp{background:#e7eefb;color:#2b4f9e}
