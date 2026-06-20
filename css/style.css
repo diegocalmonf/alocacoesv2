@@ -1948,3 +1948,16 @@ body.viewmode-geral .grid-card[data-editable="1"]{cursor:default !important}
 .rp-bad{color:#c2410c;font-weight:700}
 .rp-ok{color:#15803d;font-weight:700}
 .rp-table .num{text-align:right;font-variant-numeric:tabular-nums}
+
+/* Incluir tarefa avulsa no cronograma (Fase 6 · por projeto) */
+.pv-inclt{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#f7f5ff;border:1px solid #e6e1f9;border-radius:10px;padding:9px 12px;margin-bottom:12px}
+.pv-inclt-lb{display:inline-flex;align-items:center;gap:6px;font-size:12px;font-weight:700;color:#5b4bbf;text-transform:uppercase;letter-spacing:.03em}
+.pv-inclt-lb i{width:15px;height:15px}
+.pv-inclt select,.pv-inclt input{font-size:13px;padding:7px 9px;border:1px solid var(--line2);border-radius:8px;background:#fff;color:#333}
+.pv-inclt select{max-width:42%}
+.pv-inclt input{flex:1 1 200px;min-width:160px}
+.pv-inclt .btn{flex:0 0 auto}
+.pvt-tagm{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.03em;color:#5b4bbf;background:#ece9fb;border-radius:4px;padding:1px 5px}
+.pvt-del{width:18px;height:18px;line-height:1;border:1px solid var(--line2);background:#fff;border-radius:5px;color:#b04;cursor:pointer;font-size:12px;padding:0;margin-left:2px}
+.pvt-del:hover{border-color:#b04;background:#fff0f3}
+@media(max-width:760px){.pv-inclt select{max-width:100%;flex:1 1 100%}}
