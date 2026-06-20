@@ -1520,7 +1520,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.76.0";
+const APP_VERSION = "1.81.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -2154,7 +2154,7 @@ function setActiveNav(t){
 }
 /* Telas-página são mutuamente exclusivas: abrir uma fecha as outras (uma por vez). */
 function _fecharOutrasTelas(exceto){
-  ["esteiraOverlay","discoveryOverlay","repOverlay","kpiOverlay","actOverlay","atasOverlay","cronogramaOverlay"].forEach(function(id){
+  ["esteiraOverlay","discoveryOverlay","repOverlay","kpiOverlay","actOverlay","atasOverlay","cronogramaOverlay","mapaOverlay"].forEach(function(id){
     if(id!==exceto){ try{ var o=el(id); if(o) o.classList.remove("open"); }catch(e){} }
   });
 }
@@ -2983,9 +2983,15 @@ function _renderAtaForm(nome, iso, slot, ata){
   const d=parseISO(iso);
   const dataFmt=DOW[d.getDay()]+", "+fmtDM(d)+"/"+d.getFullYear();
   const podeEditar=canEditAction("atas") && !impressa;
+  // Tarefas do slot (derivadas do cronograma/previsto). Congeladas no objeto se impressa;
+  // senão derivadas ao vivo — espelha o comportamento de GP/líder.
+  const tarefasSlot = impressa
+    ? ((ata&&Array.isArray(ata.tarefasSlot))?ata.tarefasSlot:[])
+    : _tarefasPrevistasNoSlot(cliente, nome, slot, iso);
 
   _ataCtx={nome,iso,slot,cliente,atividade,gp,lider,horario,ata:ata||null,mes:_mesDe(iso),
     participantes:(ata&&Array.isArray(ata.participantes))?ata.participantes.map(p=>({nome:p.nome||"",cargo:p.cargo||"",empresa:p.empresa||""})):[],
+    tarefasSlot,
     podeEditar};
 
   el("ataTitle").innerHTML=`<i data-lucide="file-signature"></i>ATA · ${enc(cliente||atividade||"slot")}`;
@@ -3051,6 +3057,8 @@ function _renderAtaForm(nome, iso, slot, ata){
       <div id="ataParticipantes">${_participantesRowsHTML(_ataCtx.participantes, podeEditar)}</div>
       ${podeEditar?`<button class="btn small" id="ataAddParticipante" type="button"><i data-lucide="user-plus"></i>Adicionar participante</button>`:""}
     </div>
+    <div class="ata-sec"><label class="ata-lbl">Tarefas do slot <span class="lbl-soft">· do cronograma deste dia</span></label>
+      ${tarefasSlot.length?`<ul class="ata-tarefas">${tarefasSlot.map(t=>`<li>${enc(t)}</li>`).join("")}</ul>`:`<div class="hint" style="padding:6px 8px">Nenhuma tarefa do cronograma para este slot/dia.</div>`}</div>
     <div class="ata-sec"><label class="ata-lbl">Tarefas Executadas</label>
       <textarea id="ataTarefas" rows="4" placeholder="Descreva as tarefas executadas no atendimento..." ${ro}>${val("tarefasExecutadas")}</textarea></div>
     <div class="ata-sec"><label class="ata-lbl">Pendências Apresentadas</label>
@@ -3098,6 +3106,7 @@ function _montarAtaDoForm(ctx, existente, overrides){
     cliente:ctx.cliente||"", atividade:ctx.atividade||"", data:ctx.iso, slot:ctx.slot, horario:ctx.horario||"",
     analista:ctx.nome, gp:ctx.gp||"", lider:ctx.lider||"",
     participantes:_lerParticipantesDOM().filter(p=>p.nome||p.cargo||p.empresa),
+    tarefasSlot:(ctx.tarefasSlot||[]),
     tarefasExecutadas:(el("ataTarefas")?el("ataTarefas").value:"").trim(),
     pendenciasApresentadas:(el("ataPendencias")?el("ataPendencias").value:"").trim(),
     observacoes:(el("ataObs")?el("ataObs").value:"").trim(),
@@ -3175,6 +3184,9 @@ function _ataPrintHTML(a){
   const parts=(a.participantes&&a.participantes.length)
     ? `<table class="apr-ptc"><thead><tr><th>Participante</th><th>Cargo</th><th>Empresa</th></tr></thead><tbody>${a.participantes.map(p=>`<tr><td>${enc(p.nome||"—")}</td><td>${enc(p.cargo||"—")}</td><td>${enc(p.empresa||"—")}</td></tr>`).join("")}</tbody></table>`
     : `<div class="apr-v">—</div>`;
+  const tarSlot=(a.tarefasSlot&&a.tarefasSlot.length)
+    ? `<ul class="apr-tarefas">${a.tarefasSlot.map(t=>`<li>${enc(t)}</li>`).join("")}</ul>`
+    : `<div class="apr-v">—</div>`;
   return `
   <div class="apr-doc">
     <div class="apr-head">
@@ -3192,6 +3204,7 @@ function _ataPrintHTML(a){
       ${campo("Status", a.envioConfirmado?"Enviada":"Impressa")}
     </div>
     <div class="apr-ptc-sec"><div class="apr-l">Participantes</div>${parts}</div>
+    <div class="apr-ptc-sec"><div class="apr-l">Tarefas do slot (cronograma)</div>${tarSlot}</div>
     <div class="apr-block">
       ${campo("Tarefas Executadas", a.tarefasExecutadas, true)}
       ${campo("Pendências Apresentadas", a.pendenciasApresentadas, true)}
@@ -4059,7 +4072,7 @@ function _prevLinhasOverlap(){
   const L=_prevTabLinhas||[]; const pares=[];
   for(let i=0;i<L.length;i++)for(let j=i+1;j<L.length;j++){
     const a=L[i],b=L[j];
-    if(a.an===b.an && a.slot===b.slot && a.ini&&b.ini&&a.fim&&b.fim && a.ini<=b.fim && b.ini<=a.fim) pares.push([i,j]);
+    if(a.an&&a.slot && a.an===b.an && a.slot===b.slot && a.ini&&b.ini&&a.fim&&b.fim && a.ini<=b.fim && b.ini<=a.fim) pares.push([i,j]);
   }
   return pares;
 }
@@ -4154,7 +4167,7 @@ function _materializarTarefas(l){ l.tarefas=_tarefasOrdenadas(l); return l.taref
 // Upsert de data de tarefa na linha (clamp à janela). Metadado de planejamento (Gantt/consulta):
 // NÃO afeta o que já foi aplicado na grade.
 function _pvSetTarefaData(lineIdx, nome, campo, val){
-  const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
+  const p=_pvLiveProj(); if(!p||!canEditAction("cronograma"))return;
   _pvRecalcChain(p);
   const l=(p.previstoLinhas||[])[lineIdx]; if(!l)return;
   const arr=_materializarTarefas(l);
@@ -4164,24 +4177,24 @@ function _pvSetTarefaData(lineIdx, nome, campo, val){
   if(campo==="ini") s.ini=v; else s.fim=v;
   const isFirst=arr.length&&arr[0].nome===nome;
   if(campo==="fim" && isFirst && !s.ini && l.ini) s.ini=l.ini;     // baka o default da 1ª ao datar o fim
-  saveReg(); _renderPrevLinhas();
+  saveReg(); _cronRefresh();
 }
 // Sobe/desce a tarefa na sequência da linha (Fase 5).
 function _pvTarefasMover(lineIdx, nome, dir){
-  const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
+  const p=_pvLiveProj(); if(!p||!canEditAction("cronograma"))return;
   _pvRecalcChain(p);
   const l=(p.previstoLinhas||[])[lineIdx]; if(!l)return;
   const arr=_materializarTarefas(l);
   const i=arr.findIndex(x=>x&&x.nome===nome); if(i<0)return;
   const j=i+(dir<0?-1:1); if(j<0||j>=arr.length)return;
   const tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp;
-  saveReg(); _renderPrevLinhas();
+  saveReg(); _cronRefresh();
 }
 // Distribui as tarefas (na ordem atual) ao longo dos dias úteis da janela da atividade,
 // partição sequencial e o mais uniforme possível. Sobreposição no mesmo dia (T3) fica
 // disponível por ajuste manual depois.
 function _pvDistribuirTarefas(lineIdx){
-  const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
+  const p=_pvLiveProj(); if(!p||!canEditAction("cronograma"))return;
   _pvRecalcChain(p);
   const l=(p.previstoLinhas||[])[lineIdx]; if(!l||!l.ini||!l.fim)return;
   const arr=_materializarTarefas(l); if(!arr.length)return;
@@ -4195,7 +4208,7 @@ function _pvDistribuirTarefas(lineIdx){
     arr[i].ini=dias[pos]; arr[i].fim=dias[fimIdx];
     pos=fimIdx+1;
   }
-  saveReg(); _renderPrevLinhas();
+  saveReg(); _cronRefresh();
 }
 // Tarefas previstas para um (analista, slot, dia) de um projeto — derivado do cronograma.
 // Usado SÓ na consulta do slot; nunca na grade.
@@ -4224,7 +4237,10 @@ function _renderPrevLinhas(){
   }
   const overlaps=_prevLinhasOverlap();
   const flagged=new Set(overlaps.flat());
-  let totalSlots=0, termino="", inicio="", totalTarefas=0;
+  const team=(p&&p.analistas||[]).filter(Boolean);
+  const slotsLista=SLOTS.filter(s=>!s.lunch);
+  const podeEd=canEditAction("cronograma");
+  let totalSlots=0, termino="", inicio="", totalTarefas=0, nPlano=0;
   const head=`<div class="pvx-head"><div>#</div><div>Analista</div><div>Slot</div><div>Atividade</div><div>Início</div><div>Término</div><div>Slots</div><div>Ordem</div><div></div></div>`;
   const rows=L.map((l,idx)=>{
     totalSlots+=(l.slots||0);
@@ -4242,13 +4258,14 @@ function _renderPrevLinhas(){
         const flag=t.foraJanela?`<span class="pvt-flag" title="Fora da janela da atividade — ajuste as datas">!</span>`:"";
         if(podeEdT){
           return `<div class="pvt-row${t.complete?"":" pvt-inc"}">
-            <span class="pvt-num">${idx+1}.${t.num}</span>
-            <span class="pvt-move"><button class="pvt-up" data-li="${idx}" data-tn="${enc(t.nome)}" title="Subir"${tj===0?" disabled":""}>↑</button><button class="pvt-dn" data-li="${idx}" data-tn="${enc(t.nome)}" title="Descer"${tj===tl.length-1?" disabled":""}>↓</button></span>
-            <span class="pvt-nm" title="${enc(t.nome)}">${enc(t.nome)}</span>
-            <input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||'')}" max="${enc(l.fim||'')}" title="Início da tarefa">
-            <span class="pvt-arr">→</span>
-            <input type="date" class="pvt-fim" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.fim)}" min="${enc(t.ini||l.ini||'')}" max="${enc(l.fim||'')}" title="Término da tarefa">
-            ${flag}
+            <div class="pvt-top"><span class="pvt-num">${idx+1}.${t.num}</span>
+              <span class="pvt-move"><button class="pvt-up" data-li="${idx}" data-tn="${enc(t.nome)}" title="Subir"${tj===0?" disabled":""}>↑</button><button class="pvt-dn" data-li="${idx}" data-tn="${enc(t.nome)}" title="Descer"${tj===tl.length-1?" disabled":""}>↓</button></span>
+              <span class="pvt-nm" title="${enc(t.nome)}">${enc(t.nome)}</span>${flag}</div>
+            <div class="pvt-dates">
+              <label class="pvt-dt"><span>Início</span><input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||'')}" max="${enc(l.fim||'')}"></label>
+              <span class="pvt-arr">→</span>
+              <label class="pvt-dt"><span>Término</span><input type="date" class="pvt-fim" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.fim)}" min="${enc(t.ini||l.ini||'')}" max="${enc(l.fim||'')}"></label>
+            </div>
           </div>`;
         }
         const dt=t.complete?`${fmtDM(parseISO(t.ini))}→${fmtDM(parseISO(t.fim))}`:"sem data";
@@ -4257,22 +4274,31 @@ function _renderPrevLinhas(){
       const distBtn=(podeEdT&&l.ini&&l.fim)?`<button class="pvt-dist" data-li="${idx}" title="Espalha as tarefas, na ordem, pelos dias úteis da atividade"><i data-lucide="wand-2"></i> Distribuir no período</button>`:"";
       subHTML=`<div class="pvx-tarefas"><div class="pvt-h"><i data-lucide="list-checks"></i> Tarefas <span class="pvt-hint">· ordene com ↑↓ · 1ª inicia no começo da atividade · dentro de ${enc(l.ini||'?')}–${enc(l.fim||'?')}</span>${distBtn}</div>${linhasT}</div>`;
     }
-    return `<div class="pvx-row${flagged.has(idx)?" pvx-row-warn":""}${(!l.an||!l.slot)?" pvx-row-plano":""}">
+    const planoOnly=(!l.an||!l.slot); if(planoOnly) nPlano++;
+    const anCell=podeEd
+      ? `<select class="pvx-an" data-id="${enc(l.id)}"><option value="">— só plano —</option>${team.map(a=>`<option ${a===l.an?'selected':''}>${enc(a)}</option>`).join("")}${(l.an&&!team.includes(l.an))?`<option selected>${enc(l.an)}</option>`:""}</select>`
+      : (l.an?enc(l.an):'<span class="pvx-plano-tag">só plano</span>');
+    const slotCell=podeEd
+      ? `<select class="pvx-slot" data-id="${enc(l.id)}"><option value="">—</option>${slotsLista.map(s=>`<option value="${s.id}" ${s.id===l.slot?'selected':''}>${s.id}</option>`).join("")}</select>`
+      : (l.slot?enc(l.slot):'<span class="pvx-defina">—</span>');
+    return `<div class="pvx-row${flagged.has(idx)?" pvx-row-warn":""}${planoOnly?" pvx-row-plano":""}">
       <div class="pvx-ord">${idx+1}</div>
-      <div class="cr-an">${l.an?enc(l.an):'<span class="pvx-plano-tag" title="Linha só de plano — sem analista/slot; não vai pra grade">só plano</span>'}</div>
-      <div>${l.slot?enc(l.slot):'<span class="pvx-defina">— definir —</span>'}</div>
+      <div class="cr-an">${anCell}</div>
+      <div>${slotCell}</div>
       <div>${enc(l.atv)}</div>
       <div class="${autoCls}"><input type="date" value="${enc(l.ini||'')}" data-idx="${idx}" class="pvx-ini" title="${l.iniManual?'Início manual (trava o encadeamento). Limpe para re-encadear.':'Início automático (encadeado). Preencha para travar.'}"></div>
       <div class="${autoFimCls}"><input type="date" value="${enc(l.fim||'')}" min="${enc(l.ini||'')}" data-idx="${idx}" class="pvx-fim" title="${l.fimManual?'Término manual (ajustado). Limpe para voltar à duração da atividade.':'Término automático (duração da atividade). Edite para ajustar os slots reais.'}"></div>
       <div>${l.slots||0}</div>
-      <div class="pvx-move"><button class="pvx-up" data-idx="${idx}" title="Subir">↑</button><button class="pvx-dn" data-idx="${idx}" title="Descer">↓</button></div>
-      <button class="pvx-del" data-idx="${idx}">Remover</button>
+      <div class="pvx-move"><button class="pvx-up" data-id="${enc(l.id)}" title="Subir">↑</button><button class="pvx-dn" data-id="${enc(l.id)}" title="Descer">↓</button></div>
+      <button class="pvx-del" data-id="${enc(l.id)}">Remover</button>
     </div>${subHTML}`;
   }).join("");
   host.innerHTML=head+rows;
-  host.querySelectorAll(".pvx-del").forEach(b=>b.addEventListener("click",()=>_pvRemoverLinha(+b.dataset.idx)));
-  host.querySelectorAll(".pvx-up").forEach(b=>b.addEventListener("click",()=>_pvMover(+b.dataset.idx,-1)));
-  host.querySelectorAll(".pvx-dn").forEach(b=>b.addEventListener("click",()=>_pvMover(+b.dataset.idx,1)));
+  host.querySelectorAll(".pvx-del").forEach(b=>b.addEventListener("click",()=>_pvRemoverLinha(b.dataset.id)));
+  host.querySelectorAll(".pvx-up").forEach(b=>b.addEventListener("click",()=>_pvMover(b.dataset.id,-1)));
+  host.querySelectorAll(".pvx-dn").forEach(b=>b.addEventListener("click",()=>_pvMover(b.dataset.id,1)));
+  host.querySelectorAll(".pvx-an").forEach(s=>s.addEventListener("change",()=>_pvSetLinhaCampo(s.dataset.id,"an",s.value)));
+  host.querySelectorAll(".pvx-slot").forEach(s=>s.addEventListener("change",()=>_pvSetLinhaCampo(s.dataset.id,"slot",s.value)));
   host.querySelectorAll(".pvx-ini").forEach(inp=>inp.addEventListener("change",()=>_pvSetIni(+inp.dataset.idx,inp.value)));
   host.querySelectorAll(".pvx-fim").forEach(inp=>inp.addEventListener("change",()=>_pvSetFim(+inp.dataset.idx,inp.value)));
   host.querySelectorAll(".pvt-ini").forEach(inp=>inp.addEventListener("change",()=>_pvSetTarefaData(+inp.dataset.li,dec(inp.dataset.tn),"ini",inp.value)));
@@ -4285,10 +4311,11 @@ function _renderPrevLinhas(){
   const terminoTxt=termino?`${fmtDM(parseISO(termino))}/${parseISO(termino).getFullYear()}`:"—";
   const inicioTxt=inicio?`${fmtDM(parseISO(inicio))}/${parseISO(inicio).getFullYear()}`:"—";
   if(resumo)resumo.innerHTML=`<div class="pvx-bar">
-    <div class="pvx-term-box">Início previsto <b>${inicioTxt}</b> · Término previsto <b>${terminoTxt}</b> · <b>${totalSlots}</b> slot(s) · ${L.length} atividade(s)${totalTarefas?` · <b>${totalTarefas}</b> tarefa(s)`:""}</div>
-    <div style="display:flex;gap:10px;align-items:center">${statusHTML}<button class="btn primary" id="pvAplicar"><i data-lucide="check-check"></i> Aplicar alocações previstas</button></div>
-  </div>${overlaps.length?`<div class="pv-warn" style="display:flex;margin-top:10px"><i data-lucide="alert-triangle"></i> ${overlaps.length} sobreposição(ões): mesmo analista/slot com datas que se cruzam.</div>`:""}`;
-  const apBtn=el("pvAplicar"); if(apBtn)apBtn.addEventListener("click",()=>_pvAplicar(_pvProj));
+    <div class="pvx-term-box">Início previsto <b>${inicioTxt}</b> · Término previsto <b>${terminoTxt}</b> · <b>${totalSlots}</b> slot(s) · ${L.length} atividade(s)${totalTarefas?` · <b>${totalTarefas}</b> tarefa(s)`:""}${nPlano?` · <b class="pvx-plano-n">${nPlano} só plano</b>`:""}</div>
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">${(podeEd&&nPlano)?`<button class="btn" id="pvAtribLote" title="Aplica o analista+slot do formulário acima às linhas só-plano"><i data-lucide="users"></i> Atribuir em lote (${nPlano})</button>`:""}${statusHTML}<button class="btn primary" id="pvAplicar"><i data-lucide="check-check"></i> Aplicar alocações previstas</button></div>
+  </div>${overlaps.length?`<div class="pv-warn" style="display:flex;margin-top:10px"><i data-lucide="alert-triangle"></i> ${overlaps.length} sobreposição(ões): mesmo analista/slot com datas que se cruzam — ao aplicar, a 1ª prevalece em cada dia.</div>`:""}`;
+  const apBtn=el("pvAplicar"); if(apBtn)apBtn.addEventListener("click",()=>_pvAplicar(_pvLiveProj()));
+  const loteBtn=el("pvAtribLote"); if(loteBtn)loteBtn.addEventListener("click",_pvAtribuirLote);
   if(!canEditAction("cronograma")){ host.querySelectorAll("input,button").forEach(e=>e.disabled=true); const ap=el("pvAplicar"); if(ap)ap.disabled=true; }
   lucideRefresh();
 }
@@ -4392,33 +4419,68 @@ function _pvAddLinha(p,dados){
   _renderPrevLinhas();
 }
 // Remove a atividade da sequência (STAGING). Reaplique para refletir na grade.
-function _pvRemoverLinha(idx){
-  const p=_pvProj; if(!p||!Array.isArray(p.previstoLinhas))return;
-  if(!canEditAction("cronograma")){ alert("Você não tem permissão de edição no Cronograma de Projetos."); return; }
-  p.previstoLinhas.splice(idx,1);
-  if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
-  _pvRecalcChain(p); saveReg(); _renderPrevLinhas();
+// Resolve SEMPRE o projeto vivo de REG (evita operar em referência velha de _pvProj após
+// uma re-leitura do reg) e re-sincroniza _pvProj/_prevTabLinhas.
+function _pvLiveProj(){
+  const p=_cronProjNome?(REG.projetos||[]).find(x=>x&&x.nome===_cronProjNome):_pvProj;
+  if(p){ _pvProj=p; if(Array.isArray(p.previstoLinhas)) _prevTabLinhas=p.previstoLinhas; }
+  return p;
 }
-function _pvMover(idx,dir){
-  const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
-  const L=p.previstoLinhas, j=idx+dir;
-  if(j<0||j>=L.length)return;
-  const t=L[idx]; L[idx]=L[j]; L[j]=t;
+// Re-renderiza a VIEW ATIVA do cronograma (Lista ou Gantt) após uma mutação — garante que o
+// Gantt também atualize (ex.: exclusão de atividade/tarefa) e que nada "suma" da tela.
+function _cronRefresh(){
+  if(typeof _cronView!=="undefined" && _cronView==="gantt" && el("cronogramaBody") && _cronProjNome){ renderCronograma(); return; }
+  _renderPrevLinhas();
+}
+function _pvRemoverLinha(id){
+  const p=_pvLiveProj(); if(!p||!Array.isArray(p.previstoLinhas))return;
+  if(!canEditAction("cronograma")){ alert("Você não tem permissão de edição no Cronograma de Projetos."); return; }
+  const i=p.previstoLinhas.findIndex(l=>l&&l.id===id); if(i<0)return;
+  p.previstoLinhas.splice(i,1);
   if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
-  _pvRecalcChain(p); saveReg(); _renderPrevLinhas();
+  _pvRecalcChain(p); saveReg(); _cronRefresh();
+}
+function _pvMover(id,dir){
+  const p=_pvLiveProj(); if(!p||!canEditAction("cronograma"))return;
+  const L=p.previstoLinhas, i=L.findIndex(l=>l&&l.id===id), j=i+dir;
+  if(i<0||j<0||j>=L.length)return;
+  const t=L[i]; L[i]=L[j]; L[j]=t;
+  if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
+  _pvRecalcChain(p); saveReg(); _cronRefresh();
+}
+// Atribui/limpa analista ou slot de uma linha (Fase 6b). Preencher os dois torna a linha
+// alocável; limpar qualquer um a volta para "só plano" (datas e tarefas preservadas · A5).
+function _pvSetLinhaCampo(id, campo, val){
+  const p=_pvLiveProj(); if(!p||!canEditAction("cronograma"))return;
+  const l=p.previstoLinhas.find(x=>x&&x.id===id); if(!l)return;
+  if(campo==="an") l.an=(val||"").trim(); else if(campo==="slot") l.slot=(val||"").trim();
+  if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
+  saveReg(); _cronRefresh();
+}
+// Atribuição em lote: usa o analista+slot do formulário de inclusão como ponto de partida (A2).
+function _pvAtribuirLote(){
+  const p=_pvLiveProj(); if(!p||!canEditAction("cronograma"))return;
+  const an=(el("pvAn")&&el("pvAn").value)||"", slot=(el("pvSlot")&&el("pvSlot").value)||"";
+  if(!an||!slot){ alert("Escolha o analista e o slot no formulário acima e clique de novo — eles serão aplicados às linhas só-plano."); return; }
+  const planos=(p.previstoLinhas||[]).filter(l=>!l.an||!l.slot);
+  if(!planos.length){ alert("Não há linhas só-plano para atribuir."); return; }
+  if(!confirm(`Atribuir ${an} · ${slot} a ${planos.length} linha(s) só-plano?\nVocê pode ajustar exceções linha a linha depois.`))return;
+  planos.forEach(l=>{ l.an=an; l.slot=slot; });
+  if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
+  saveReg(); _cronRefresh();
 }
 function _pvSetIni(idx,val){
-  const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
+  const p=_pvLiveProj(); if(!p||!canEditAction("cronograma"))return;
   const l=p.previstoLinhas[idx]; if(!l)return;
   if(val){ l.ini=val; l.iniManual=true; } else { l.iniManual=false; }
   if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
-  _pvRecalcChain(p); saveReg(); _renderPrevLinhas();
+  _pvRecalcChain(p); saveReg(); _cronRefresh();
 }
 // Término manual: trava a data de término (ajuste livre). Vazio = volta à duração da atividade.
 // A data é normalizada para um dia útil (≤ a escolhida) e nunca antes do início da linha;
 // os SLOTS passam a refletir os dias úteis reais do intervalo (ini..fim).
 function _pvSetFim(idx,val){
-  const p=_pvProj; if(!p||!canEditAction("cronograma"))return;
+  const p=_pvLiveProj(); if(!p||!canEditAction("cronograma"))return;
   const l=p.previstoLinhas[idx]; if(!l)return;
   if(val){
     let f=_diaUtilOuAnterior(parseISO(val));
@@ -4428,7 +4490,7 @@ function _pvSetFim(idx,val){
     l.fimManual=false;   // re-deriva pela duração da atividade
   }
   if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
-  _pvRecalcChain(p); saveReg(); _renderPrevLinhas();
+  _pvRecalcChain(p); saveReg(); _cronRefresh();
 }
 function _pvRenderWarn(p){ const warn=el("pvWarn"); if(!warn)return; const o=_prevLinhasOverlap(); if(o.length){warn.style.display="";warn.innerHTML=`<i data-lucide="alert-triangle"></i> ${o.length} sobreposição(ões) detectada(s).`;}else warn.style.display="none"; }
 
@@ -4474,7 +4536,7 @@ function _pvAplicar(p){
     p.previstoAplicadoEm=new Date().toISOString();
     persist(); persistPrev();
     try{ audit("project.previsto.aplicar", p.nome, null, {linhas:linhas.length, prevNovos, realNovos, removidos, esvaziados}); }catch(e){}
-    _renderPrevLinhas(); renderAll();
+    _cronRefresh(); renderAll();
     let msg=`Alocações previstas aplicadas na grade de "${p.nome}":\n• ${desired.size} slot(s) previstos\n• ${realNovos} preenchido(s) no realizado (estavam livres)`;
     if(ocupadoOutro) msg+=`\n• ${ocupadoOutro} mantido(s) por já estarem ocupados por outro projeto (divergência)`;
     if(removidos) msg+=`\n• ${removidos} previsto(s) antigo(s) reconciliado(s)${esvaziados?` · ${esvaziados} realizado(s) revertido(s) a livre`:""}`;
@@ -4580,7 +4642,8 @@ function abrirImportCronograma(){
       <div id="impAviso"></div>
       <div id="impConfig" style="display:none">
         <div class="imp-row"><label>Nível que vira <b>atividade</b></label> <select id="impNivel"></select> <span class="imp-counts" id="impCounts"></span></div>
-        <div class="imp-legend"><span class="imp-k imp-n-atv">atividade</span><span class="imp-k imp-n-tar">tarefa</span><span class="imp-k imp-n-grp">estrutura</span></div>
+        <div class="imp-row imp-selrow"><label class="imp-allck"><input type="checkbox" id="impAll" checked> Marcar / desmarcar todos</label> <span class="imp-sel" id="impSelCount"></span></div>
+        <div class="imp-legend"><span class="imp-k imp-n-atv">atividade</span><span class="imp-k imp-n-tar">tarefa</span><span class="imp-st st-new">novo</span><span class="imp-st st-exist">já existe</span></div>
         <div class="imp-tree" id="impTree"></div>
       </div>
     </div>
@@ -4591,7 +4654,19 @@ function abrirImportCronograma(){
   el("impClose").onclick=close; el("impCancel").onclick=close;
   ov.addEventListener("click",e=>{ if(e.target===ov)close(); });
   el("impFile").addEventListener("change",ev=>{ const f=ev.target.files&&ev.target.files[0]; if(!f)return; el("impFname").textContent=f.name; const rd=new FileReader(); rd.onload=()=>{ try{ _impCarregar(String(rd.result||""), p); }catch(e){ alert("Falha ao ler o CSV: "+(e&&e.message||e)); } }; rd.readAsText(f,"UTF-8"); });
-  el("impDo").addEventListener("click",()=>{ if(!_impDados)return; const La=+el("impNivel").value; const mapeado=_impMapear(_impDados.nodes, La); if(!mapeado.length){ alert("Nada para importar nesse nível."); return; } const r=_impAplicar(p, mapeado); close(); renderCronograma(); alert(`Importado em "${p.nome}":\n• ${r.atividades} atividade(s) (${r.atvCriadas} criada(s), ${r.atvCasadas} casada(s))\n• ${r.tarCriadas} tarefa(s) nova(s) no catálogo\n• ${r.linNovas} linha(s) nova(s) · ${r.linAtual} atualizada(s)\n\nAs linhas entraram como “só plano” (sem analista/slot) — atribua analista e slot para aplicar na grade.`); });
+  el("impDo").addEventListener("click",()=>{
+    if(!_impDados)return;
+    const mapeado=_impDados.mapeado||[], tree=el("impTree"), filtrado=[];
+    mapeado.forEach((m,ai)=>{
+      const atvCk=tree.querySelector(`.imp-ck-atv[data-ai="${ai}"]`);
+      if(!atvCk||!atvCk.checked)return;
+      const tarefas=m.tarefas.filter((t,ti)=>{ const c=tree.querySelector(`.imp-ck-tar[data-ai="${ai}"][data-ti="${ti}"]`); return c&&c.checked; });
+      filtrado.push({atv:m.atv, ini:m.ini, fim:m.fim, tarefas});
+    });
+    if(!filtrado.length){ alert("Selecione ao menos uma atividade para importar."); return; }
+    const r=_impAplicar(p, filtrado); close(); renderCronograma();
+    alert(`Importado em "${p.nome}":\n• ${r.atividades} atividade(s) (${r.atvCriadas} criada(s), ${r.atvCasadas} casada(s))\n• ${r.tarCriadas} tarefa(s) nova(s) no catálogo\n• ${r.linNovas} linha(s) nova(s) · ${r.linAtual} atualizada(s)\n\nAs linhas entraram como “só plano” (sem analista/slot) — atribua analista e slot para aplicar na grade.`);
+  });
   lucideRefresh();
 }
 function _impCarregar(text, p){
@@ -4607,20 +4682,214 @@ function _impCarregar(text, p){
   el("impAviso").innerHTML=(_normProj(bk.nome)!==_normProj(p.nome))?`<div class="imp-warn">O CSV identifica o projeto “<b>${enc(bk.nome)}</b>”, diferente do destino “<b>${enc(p.nome)}</b>”. A importação vai para o destino selecionado.</div>`:"";
   el("impConfig").style.display=""; el("impDo").disabled=false;
   el("impNivel").onchange=_impRenderPreview;
+  const all=el("impAll"); if(all)all.onchange=()=>{ const c=all.checked; el("impTree").querySelectorAll(".imp-ck-atv,.imp-ck-tar").forEach(cb=>cb.checked=c); _impUpdSel(); };
   _impRenderPreview();
 }
 function _impRenderPreview(){
   if(!_impDados)return;
   const La=+el("impNivel").value, mapeado=_impMapear(_impDados.nodes, La);
-  const nTar=mapeado.reduce((s,m)=>s+m.tarefas.length,0);
-  el("impCounts").innerHTML=`→ <b>${mapeado.length}</b> atividade(s), <b>${nTar}</b> tarefa(s)`;
-  el("impTree").innerHTML=_impDados.nodes.map(n=>{
-    const isAtv=(n.kind!=='FOLHA'&&n.lv===La)||(n.kind==='FOLHA'&&n.lv<=La);
-    const isTar=(n.kind==='FOLHA'&&n.lv>La);
-    const cls=isAtv?"imp-n-atv":(isTar?"imp-n-tar":"imp-n-grp");
-    const dt=(n.ini&&n.fim)?`<span class="imp-dt">${fmtDM(parseISO(n.ini))}→${fmtDM(parseISO(n.fim))}</span>`:`<span class="imp-dt imp-nodt">sem data</span>`;
-    return `<div class="imp-n ${cls}" style="padding-left:${8+n.lv*16}px">${enc(n.nome)} ${dt}</div>`;
+  _impDados.mapeado=mapeado;
+  const exA=nome=>(REG.atividades||[]).some(a=>a&&_normProj(a.nome)===_normProj(nome));
+  const exT=(atv,nome)=>(REG.tarefas||[]).some(t=>t&&t.atividade===atv&&_normProj(t.nome)===_normProj(nome));
+  let nTar=0;
+  const html=mapeado.map((m,ai)=>{
+    const ea=exA(m.atv);
+    const dtA=(m.ini&&m.fim)?`<span class="imp-dt">${fmtDM(parseISO(m.ini))}→${fmtDM(parseISO(m.fim))}</span>`:"";
+    const tars=m.tarefas.map((t,ti)=>{ nTar++; const et=exT(m.atv,t.nome);
+      const dt=(t.ini&&t.fim)?`<span class="imp-dt">${fmtDM(parseISO(t.ini))}→${fmtDM(parseISO(t.fim))}</span>`:`<span class="imp-dt imp-nodt">sem data</span>`;
+      return `<div class="imp-line imp-tar"><label><input type="checkbox" class="imp-ck-tar" data-ai="${ai}" data-ti="${ti}" checked><span class="imp-nm">${enc(t.nome)}</span></label>${dt}<span class="imp-st ${et?'st-exist':'st-new'}">${et?'já existe':'novo'}</span></div>`;
+    }).join("");
+    return `<div class="imp-grp"><div class="imp-line imp-atv"><label><input type="checkbox" class="imp-ck-atv" data-ai="${ai}" checked><b class="imp-nm">${enc(m.atv)}</b></label>${dtA}<span class="imp-st ${ea?'st-exist':'st-new'}">${ea?'já existe':'nova'}</span></div>${tars}</div>`;
   }).join("");
+  el("impCounts").innerHTML=`→ <b>${mapeado.length}</b> atividade(s), <b>${nTar}</b> tarefa(s)`;
+  el("impTree").innerHTML=html;
+  const tree=el("impTree");
+  tree.querySelectorAll(".imp-ck-atv").forEach(cb=>cb.addEventListener("change",()=>{ tree.querySelectorAll(`.imp-ck-tar[data-ai="${cb.dataset.ai}"]`).forEach(t=>t.checked=cb.checked); _impUpdSel(); }));
+  tree.querySelectorAll(".imp-ck-tar").forEach(cb=>cb.addEventListener("change",_impUpdSel));
+  const all=el("impAll"); if(all)all.checked=true;
+  _impUpdSel();
+}
+function _impUpdSel(){
+  const tree=el("impTree"); if(!tree)return;
+  const a=tree.querySelectorAll(".imp-ck-atv:checked").length, t=tree.querySelectorAll(".imp-ck-tar:checked").length;
+  const s=el("impSelCount"); if(s)s.textContent=`${a} atividade(s) · ${t} tarefa(s) selecionada(s)`;
+  const d=el("impDo"); if(d)d.disabled=(a===0);
+}
+
+/* ===================== MAPA DO PROJETO (dashboard gerencial · Fase 7) =====================
+   Visão por projeto: previsto×realizado, métricas, Go-Live e tendência. Filtro = projeto +
+   data inicial + data final. Os dados só são baixados ao Aplicar: carga ADITIVA por mês via
+   .once (não poda a janela da grade) — economiza download. Reusa a permissão de "relatorios". */
+let _mapaProj="", _mapaDe="", _mapaAte="", _mapaAplicado=false, _mapaLoading=false;
+function _mapaProjetosLista(){ try{ return (_projetosVisiveis()||[]).filter(p=>p&&p.nome).slice().sort(byNome); }catch(e){ return (REG.projetos||[]).filter(p=>p&&p.nome).slice().sort(byNome); } }
+function openMapa(){
+  if(!canViewAction("relatorios")){ alert("Você não tem acesso ao Mapa do Projeto."); return; }
+  _fecharOutrasTelas("mapaOverlay");
+  const o=el("mapaOverlay"); if(o)o.classList.add("open");
+  renderMapa();
+}
+function closeMapa(){ const o=el("mapaOverlay"); if(o)o.classList.remove("open"); }
+function _mesesEntre(de,ate){ const out=[]; if(!de||!ate)return out; let d=parseISO(de); const e=parseISO(ate); d=new Date(d.getFullYear(),d.getMonth(),1); let g=0; while(d<=e&&g++<240){ out.push(toISO(d).slice(0,7)); d=new Date(d.getFullYear(),d.getMonth()+1,1); } return out; }
+// Carga aditiva (somente leitura .once) dos meses do intervalo — não mexe nos listeners da grade.
+function _mapaCarregarMeses(meses){
+  if(!_db || !ALLOC_WINDOWED_READ || _histCompleto) return Promise.resolve();
+  const ps=(meses||[]).map(m=>new Promise(res=>{
+    try{ _db.ref(ALLOC_DATA_PATH+"/"+m).once("value", s=>{ const v=s.val(); if(v&&!Array.isArray(v)) Object.assign(DATA,v); else if(v&&Array.isArray(v)) Object.assign(DATA, arrayToAlloc(v)); res(); }, ()=>res()); }catch(e){ res(); }
+  }));
+  return Promise.all(ps);
+}
+function renderMapa(){
+  const host=el("mapaBody"); if(!host)return;
+  if(!_mapaDe||!_mapaAte){ const h=new Date(); _mapaDe=toISO(new Date(h.getFullYear(),h.getMonth()-2,1)); _mapaAte=toISO(addDays(h,90)); }
+  const projs=_mapaProjetosLista();
+  if(!_mapaProj && projs[0]) _mapaProj=projs[0].nome;
+  const filtro=`<div class="mapa-filtro">
+    <span class="mf-lb">Projeto</span>
+    <select id="mapaProjSel">${projs.length?projs.map(p=>`<option ${p.nome===_mapaProj?'selected':''}>${enc(p.nome)}</option>`).join(""):`<option value="">(sem projetos)</option>`}</select>
+    <span class="mf-lb">De</span><input type="date" id="mapaDe" value="${enc(_mapaDe)}">
+    <span class="ate">até</span><input type="date" id="mapaAte" value="${enc(_mapaAte)}">
+    <button class="btn filtro-aplicar" id="mapaAplicar"><i data-lucide="filter"></i> Aplicar filtro</button>
+  </div>`;
+  let corpo;
+  if(_mapaLoading) corpo=`<div class="loading">Carregando dados do período…</div>`;
+  else if(!_mapaAplicado) corpo=_htmlSobDemanda("Escolha o projeto e o período e clique em <b>Aplicar filtro</b> — só os meses do intervalo serão baixados.");
+  else corpo=_mapaDashboardHTML();
+  host.innerHTML=filtro+`<div id="mapaPainel">${corpo}</div>`;
+  const sel=el("mapaProjSel"); if(sel)sel.addEventListener("change",e=>{ _mapaProj=e.target.value; _mapaAplicado=false; renderMapa(); });
+  const ap=el("mapaAplicar"); if(ap)ap.addEventListener("click",_mapaAplicarFiltro);
+  lucideRefresh();
+}
+function _mapaAplicarFiltro(){
+  const de=el("mapaDe")?el("mapaDe").value:"", ate=el("mapaAte")?el("mapaAte").value:"", proj=el("mapaProjSel")?el("mapaProjSel").value:"";
+  if(!proj){ alert("Selecione um projeto."); return; }
+  if(!de||!ate){ alert("Selecione data inicial e final."); return; }
+  if(de>ate){ alert("A data inicial não pode ser maior que a final."); return; }
+  _mapaProj=proj; _mapaDe=de; _mapaAte=ate; _mapaLoading=true; renderMapa();
+  _mapaCarregarMeses(_mesesEntre(de,ate)).then(()=>{ _mapaLoading=false; _mapaAplicado=true; renderMapa(); })
+    .catch(e=>{ _mapaLoading=false; alert("Falha ao carregar dados: "+(e&&e.message||e)); renderMapa(); });
+}
+// Núcleo de métricas do projeto no período (compartilhado por cards e, na 7b, pelos gráficos).
+function _mapaCalc(p){
+  const de=_mapaDe, ate=_mapaAte, hoje=toISO(new Date());
+  try{ _pvRecalcChain(p); }catch(e){}
+  const linhas=(p.previstoLinhas||[]);
+  const aloc=linhas.filter(l=>l&&l.an&&l.slot&&l.ini&&l.fim);
+  const soPlano=linhas.filter(l=>l&&(!l.an||!l.slot)).length;
+  let cronIni="", cronFim="";
+  linhas.forEach(l=>{ if(l.ini&&(!cronIni||l.ini<cronIni))cronIni=l.ini; if(l.fim&&(!cronFim||l.fim>cronFim))cronFim=l.fim; });
+  const diasCron=(cronIni&&cronFim)?_diasUteisEntre(cronIni,cronFim).length:0;
+  let prevPer=0, realPer=0, prevTot=0, realTot=0, divergPer=0; const porAtv=[]; const perDay={};
+  aloc.forEach(l=>{
+    const cells=_pvExpandir(l); let lp=0,lr=0,lpp=0,lrp=0;
+    cells.forEach(c=>{ lp++; const cel=DATA[c.k]; const temConteudo=_temConteudo(cel);
+      const meu=temConteudo && _normProj(cel.cliente)===_normProj(p.nome); const r=meu?1:0; lr+=r;
+      if(c.iso>=de&&c.iso<=ate){ lpp++; lrp+=r; (perDay[c.iso]=perDay[c.iso]||{prev:0,real:0}).prev++; if(meu)perDay[c.iso].real++; else if(temConteudo)divergPer++; }
+    });
+    prevTot+=lp; realTot+=lr; prevPer+=lpp; realPer+=lrp;
+    const frac=lp?lr/lp:0;
+    porAtv.push({atv:l.atv, an:l.an, slot:l.slot, ini:l.ini, fim:l.fim, prev:lp, real:lr, frac, atrasada:(l.fim<hoje&&frac<1)});
+  });
+  const pendPer=Math.max(0, prevPer-realPer-divergPer);
+  // série acumulada (curva S) nos dias úteis do período
+  const isos=(de&&ate)?_diasUteisEntre(de,ate):[]; let pa=0, ra=0;
+  const serie=isos.map(iso=>{ const d=perDay[iso]||{prev:0,real:0}; pa+=d.prev; ra+=d.real; return {iso, prev:pa, real:ra}; });
+  const evolPer=prevPer?realPer/prevPer:0, evolTot=prevTot?realTot/prevTot:0;
+  let espHoje=0;
+  if(cronIni&&cronFim&&diasCron){ if(hoje<cronIni)espHoje=0; else if(hoje>cronFim)espHoje=1; else espHoje=_diasUteisEntre(cronIni,hoje).length/diasCron; }
+  // projeção por ritmo médio (slots realizados ÷ dias úteis decorridos)
+  let projTermino="";
+  if(cronIni && realTot>0){
+    const ate2=(hoje<cronFim||!cronFim)?hoje:cronFim;
+    const decorr=(hoje>=cronIni)?_diasUteisEntre(cronIni,ate2).length:0;
+    const ritmo=decorr?realTot/decorr:0, restante=Math.max(0,prevTot-realTot);
+    if(ritmo>0&&restante>0) projTermino=_avancaDiasUteis(hoje, Math.ceil(restante/ritmo));
+    else if(restante===0) projTermino=hoje;
+  }
+  const glPrev=p.goLivePrevisto||"", glAj=p.goLiveAjustado||"", glReal=p.goLiveRealizado||"";
+  const glAlvo=glReal||glAj||glPrev;
+  const glDesvio=(glPrev&&glAlvo&&glAlvo!==glPrev)?_duDelta(glPrev,glAlvo):0;
+  const projVsGl=(projTermino&&glAlvo)?_duDelta(glAlvo,projTermino):null;
+  const total=porAtv.length, concl=porAtv.filter(a=>a.frac>=1).length, atras=porAtv.filter(a=>a.atrasada).length;
+  return {p,de,ate,hoje,linhas,aloc,soPlano,cronIni,cronFim,diasCron,prevPer,realPer,prevTot,realTot,divergPer,pendPer,serie,evolPer:prevPer?realPer/prevPer:0,evolTot:prevTot?realTot/prevTot:0,espHoje,porAtv,total,concl,atras,andamento:total-concl,projTermino,glPrev,glAj,glReal,glAlvo,glDesvio,projVsGl};
+}
+// Curva S — previsto × realizado acumulado (SVG), nos dias úteis do período.
+function _mapaCurvaS(m){
+  const s=m.serie||[]; if(s.length<2) return `<div class="mp-chart-empty">Sem dados suficientes no período.</div>`;
+  const W=520,H=200,L=40,R=14,T=14,B=26, iw=W-L-R, ih=H-T-B;
+  const maxY=Math.max(1, s[s.length-1].prev), n=s.length;
+  const X=i=>L+(n===1?0:(i/(n-1))*iw), Y=v=>T+(1-(v/maxY))*ih;
+  const pts=k=>s.map((d,i)=>`${X(i).toFixed(1)},${Y(d[k]).toFixed(1)}`).join(" ");
+  const grid=[0,.5,1].map(f=>{ const y=Y(maxY*f); return `<line x1="${L}" y1="${y.toFixed(1)}" x2="${W-R}" y2="${y.toFixed(1)}" stroke="#eee"/><text x="${L-6}" y="${(y+3).toFixed(1)}" text-anchor="end" font-size="9" fill="#999">${Math.round(maxY*f)}</text>`; }).join("");
+  const xl=[0,Math.floor((n-1)/2),n-1].map(i=>`<text x="${X(i).toFixed(1)}" y="${H-8}" text-anchor="middle" font-size="9" fill="#999">${fmtDM(parseISO(s[i].iso))}</text>`).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${grid}
+    <polyline points="${pts('prev')}" fill="none" stroke="#c9b8a8" stroke-width="2" stroke-dasharray="4 3"/>
+    <polyline points="${pts('real')}" fill="none" stroke="#E55810" stroke-width="2.5"/>${xl}</svg>
+    <div class="mp-legend"><span class="lg lg-prev">previsto acum.</span><span class="lg lg-real">realizado acum.</span></div>`;
+}
+// Previsto × realizado por atividade (barras HTML responsivas), top 12 por previsto.
+function _mapaBarrasAtv(m){
+  const arr=(m.porAtv||[]).slice().sort((a,b)=>b.prev-a.prev);
+  if(!arr.length) return `<div class="mp-chart-empty">Sem atividades alocáveis no projeto.</div>`;
+  const top=arr.slice(0,12), maxP=Math.max(1,...top.map(a=>a.prev));
+  const rows=top.map(a=>`<div class="mp-bar-row"><div class="mp-bar-lb" title="${enc(a.atv)} · ${enc(a.an)}/${enc(a.slot)}">${enc(a.atv)}</div><div class="mp-bar-track"><div class="mp-bar-prev" style="width:${((a.prev/maxP)*100).toFixed(1)}%"></div><div class="mp-bar-real" style="width:${((a.real/maxP)*100).toFixed(1)}%"></div></div><div class="mp-bar-val">${a.real}/${a.prev}</div></div>`).join("");
+  return rows+(arr.length>12?`<div class="mp-chart-note">+${arr.length-12} atividade(s) não exibida(s)</div>`:"");
+}
+// Donut de status das células no período: realizado / divergente (outro projeto) / pendente.
+function _mapaDonut(m){
+  const segs=[{v:m.realPer,c:"#E55810",l:"realizado"},{v:m.divergPer,c:"#7c89f6",l:"divergente"},{v:m.pendPer,c:"#e2e2e2",l:"pendente"}];
+  const tot=segs.reduce((s,x)=>s+x.v,0);
+  if(!tot) return `<div class="mp-chart-empty">Sem células previstas no período.</div>`;
+  const r=52,cx=70,cy=70,C=2*Math.PI*r; let off=0;
+  const circles=segs.filter(s=>s.v>0).map(s=>{ const len=C*(s.v/tot); const e=`<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.c}" stroke-width="18" stroke-dasharray="${len.toFixed(2)} ${(C-len).toFixed(2)}" stroke-dashoffset="${(-off).toFixed(2)}" transform="rotate(-90 ${cx} ${cy})"/>`; off+=len; return e; }).join("");
+  const pctReal=Math.round((m.realPer/tot)*100);
+  const leg=segs.map(s=>`<div class="mp-dl"><span class="mp-dot" style="background:${s.c}"></span>${s.l} <b>${s.v}</b></div>`).join("");
+  return `<div class="mp-donut-wrap"><svg viewBox="0 0 140 140" style="width:140px;height:140px;flex:0 0 auto">${circles}<text x="70" y="66" text-anchor="middle" font-size="22" font-weight="800" fill="#222">${pctReal}%</text><text x="70" y="84" text-anchor="middle" font-size="9" fill="#999">realizado</text></svg><div class="mp-donut-leg">${leg}</div></div>`;
+}
+// Linha do tempo: span do cronograma + marcos hoje, Go-Live e projeção de término.
+function _mapaTimeline(m){
+  if(!m.cronIni||!m.cronFim) return `<div class="mp-chart-empty">Projeto sem cronograma datado.</div>`;
+  const marks=[m.cronIni,m.cronFim,m.hoje,m.glAlvo,m.projTermino].filter(Boolean).map(parseISO);
+  const min=new Date(Math.min.apply(null,marks)), max=new Date(Math.max.apply(null,marks));
+  const span=Math.max(1,(max-min)), W=520,H=72,L=10,R=10,iw=W-L-R,y=34;
+  const X=iso=>L+((parseISO(iso)-min)/span)*iw;
+  const bar=`<rect x="${X(m.cronIni).toFixed(1)}" y="${y-6}" width="${Math.max(2,(X(m.cronFim)-X(m.cronIni))).toFixed(1)}" height="12" rx="6" fill="#f0d9c8"/><text x="${X(m.cronIni).toFixed(1)}" y="${y-12}" font-size="8.5" fill="#b08" opacity=".0"> </text>`;
+  const mark=(iso,color,label,up)=>{ if(!iso)return ""; const x=X(iso).toFixed(1); const ly=up?y-12:y+24; return `<line x1="${x}" y1="${y-13}" x2="${x}" y2="${y+13}" stroke="${color}" stroke-width="2"/><text x="${x}" y="${ly}" text-anchor="middle" font-size="9" fill="${color}" font-weight="700">${label}</text>`; };
+  const projColor=(m.projVsGl>0)?"#c2410c":"#15803d";
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">${bar}
+    ${mark(m.cronIni,"#a8895f",fmtDM(parseISO(m.cronIni)),false)}
+    ${mark(m.cronFim,"#a8895f",fmtDM(parseISO(m.cronFim)),false)}
+    ${mark(m.hoje,"#333","hoje",true)}
+    ${mark(m.glAlvo,"#1565c0","Go-Live",true)}
+    ${m.projTermino?mark(m.projTermino,projColor,"projeção",false):""}</svg>`;
+}
+function _mapaDashboardHTML(){
+  const p=(REG.projetos||[]).find(x=>x&&x.nome===_mapaProj);
+  if(!p) return `<div class="rep-empty">Projeto não encontrado.</div>`;
+  if(!Array.isArray(p.previstoLinhas)||!p.previstoLinhas.length) return `<div class="rep-empty"><b>${enc(p.nome)}</b> ainda não tem cronograma. Monte o cronograma do projeto para ver o mapa.</div>`;
+  const m=_mapaCalc(p), pct=f=>Math.round((f||0)*100), dm=iso=>iso?fmtDM(parseISO(iso)):"—";
+  const ritmoTxt=m.evolPer>=m.espHoje?`<span class="mp-ok">no ritmo</span>`:`<span class="mp-bad">atrasado</span>`;
+  const glS=m.glReal?`realizado ${dm(m.glReal)}`:(m.glAj?`ajustado ${dm(m.glAj)}`:"—");
+  const glDev=m.glDesvio?`<span class="${m.glDesvio>0?'mp-bad':'mp-ok'}">${m.glDesvio>0?'+':''}${m.glDesvio} d.ú.</span>`:"";
+  const projS=m.projVsGl==null?"no ritmo atual":(m.projVsGl>0?`<span class="mp-bad">+${m.projVsGl} d.ú. vs Go-Live</span>`:(m.projVsGl<0?`<span class="mp-ok">${m.projVsGl} d.ú. vs Go-Live</span>`:`<span class="mp-ok">no Go-Live</span>`));
+  const cards=[
+    {t:"Evolução no período", v:`${pct(m.evolPer)}%`, s:`${m.realPer}/${m.prevPer} slots`},
+    {t:"Esperado até hoje", v:`${pct(m.espHoje)}%`, s:ritmoTxt},
+    {t:"Go-Live previsto", v:dm(m.glPrev), s:`${glS} ${glDev}`},
+    {t:"Duração do cronograma", v:`${m.diasCron}`, s:`dias úteis · ${dm(m.cronIni)}→${dm(m.cronFim)}`},
+    {t:"Atividades", v:`${m.total}`, s:`${m.concl} concl. · ${m.andamento} em curso · ${m.atras} atrasada(s)`, cls:m.atras?"mp-warn":""},
+    {t:"Projeção de término", v:m.projTermino?dm(m.projTermino):"—", s:projS},
+  ];
+  const cardsHTML=cards.map(c=>`<div class="mp-card ${c.cls||''}"><div class="mp-t">${c.t}</div><div class="mp-v">${c.v}</div><div class="mp-s">${c.s}</div></div>`).join("");
+  const barra=`<div class="mp-progwrap"><div class="mp-prog"><div class="mp-prog-fill" style="width:${pct(m.evolPer)}%"></div><div class="mp-prog-exp" style="left:${Math.min(100,pct(m.espHoje))}%" title="Esperado até hoje: ${pct(m.espHoje)}%"></div></div><div class="mp-prog-lbl"><span>Realizado ${pct(m.evolPer)}%</span><span>Esperado ${pct(m.espHoje)}%</span></div></div>`;
+  const soPlano=m.soPlano?`<div class="mp-note">${m.soPlano} atividade(s) só de plano (sem analista/slot) — não entram no realizado.</div>`:"";
+  const charts=`<div class="mp-charts">
+    <div class="mp-chart"><div class="mp-ct">Curva S · previsto × realizado acumulado (no período)</div>${_mapaCurvaS(m)}</div>
+    <div class="mp-chart"><div class="mp-ct">Status das células (no período)</div>${_mapaDonut(m)}</div>
+    <div class="mp-chart mp-chart-wide"><div class="mp-ct">Previsto × realizado por atividade (slots)</div>${_mapaBarrasAtv(m)}</div>
+    <div class="mp-chart mp-chart-wide"><div class="mp-ct">Linha do tempo · Go-Live e projeção de término</div>${_mapaTimeline(m)}</div>
+  </div>`;
+  return `<div class="mp-head"><h3>${enc(p.nome)}</h3><div class="mp-sub">Líder ${enc(p.lider||'—')} · GP ${enc(p.gp||'—')} · período ${dm(m.de)}–${dm(m.ate)}</div></div>
+    <div class="mp-cards">${cardsHTML}</div>${barra}${soPlano}${charts}`;
 }
 
 /* ===================== CRONOGRAMA DE PROJETOS (tela dedicada · Fase 1) =====================
@@ -5836,6 +6105,7 @@ function applyActionMenuVisibility(){
     {sel:'#esteiraBtn',                    action:"esteira"},
     {sel:'#discoveryBtn',                  action:"discovery"},
     {sel:'#reportsBtn',                    action:"relatorios"},
+    {sel:'#mapaBtn',                       action:"relatorios"},
     {sel:'#kpisBtn',                       action:"kpis"},
     {sel:'#acoesBtn',                      action:"cadastros"},
   ];
@@ -6318,7 +6588,7 @@ function contarSlots(nome,dias,fer){
 /* tabs do relatório */
 function renderReports(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
   // Tabs
-  const tabs=[["alocacao","Alocação por Analista"],["squads","Squads"],["mapa","Mapa de Slots"],["mapaproj","Mapa de Projeto"],["livres","Slots Livres"],["projetos","Alocação por Projetos"],["golive","Gestão de Go-Live"],["golivectrl","Controle de Go-Lives"],["ferias","Férias"],["pendobs","Pendências de obs."]]
+  const tabs=[["alocacao","Alocação por Analista"],["squads","Squads"],["mapa","Mapa de Slots"],["mapaproj","Mapa de Projeto"],["livres","Slots Livres"],["projetos","Alocação por Projetos"],["porlider","Projetos por Líder"],["golive","Gestão de Go-Live"],["golivectrl","Controle de Go-Lives"],["ferias","Férias"],["pendobs","Pendências de obs."]]
     .concat(canViewAction("prealoc")?[["aderencia","Aderência ao Plano"]]:[])
     .sort((a,b)=>a[1].localeCompare(b[1],"pt",{sensitivity:"base"}));
   el("repTabs").innerHTML=tabs.map(([id,lb])=>`<button data-tab="${id}" class="${id===repTab?'on':''}">${lb}</button>`).join("");
@@ -6389,6 +6659,7 @@ function renderReports(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualq
   else if(repTab==="ferias")renderRepFerias();
   else if(repTab==="pendobs")renderRepPendObs();
   else if(repTab==="aderencia")renderRepAderencia();
+  else if(repTab==="porlider")renderRepPorLider();
   else renderRepProjetos();
 }
 
@@ -7264,6 +7535,57 @@ function renderRepProjetos(){
 }
 
 /* === Relatório 4: Gestão de Go-Live === */
+/* ===================== RELATÓRIO · Projetos por Líder (Fase 7c) =====================
+   Lista os projetos do escopo agrupados por líder, com Go-Live (previsto × ajustado/realizado),
+   desvio em dias úteis, evolução no período carregado, status e nº de atividades. Subtotais por
+   líder. Filtro por líder vem do seletor de Escopo ("Equipe: …"). */
+function renderRepPorLider(){
+  const hoje=toISO(new Date()), de=repFrom||"", ate=repTo||"";
+  let projs=(REG.projetos||[]).filter(p=>p&&p.nome);
+  try{ const vis=new Set((_projetosVisiveis()||[]).map(p=>p.nome)); projs=projs.filter(p=>vis.has(p.nome)); }catch(e){}
+  if(repScope.startsWith("lider:")){ const l=repScope.slice(6); projs=projs.filter(p=>(p.lider||"")===l); }
+  else if(repScope.startsWith("gp:")){ const g=repScope.slice(3); projs=projs.filter(p=>(p.gp||"")===g); }
+  else if(repScope.startsWith("analista:")){ const n=repScope.slice(9); projs=projs.filter(p=>(p.analistas||[]).includes(n)); }
+  const rows=projs.map(p=>{
+    try{ _pvRecalcChain(p); }catch(e){}
+    const linhas=(p.previstoLinhas||[]), aloc=linhas.filter(l=>l&&l.an&&l.slot&&l.ini&&l.fim);
+    let cronIni="",cronFim="";
+    linhas.forEach(l=>{ if(l.ini&&(!cronIni||l.ini<cronIni))cronIni=l.ini; if(l.fim&&(!cronFim||l.fim>cronFim))cronFim=l.fim; });
+    let prevPer=0,realPer=0;
+    aloc.forEach(l=>{ _pvExpandir(l).forEach(c=>{ if(de&&ate&&c.iso>=de&&c.iso<=ate){ prevPer++; if(_celRealizadaProj(c.k,p.nome))realPer++; } }); });
+    const evol=prevPer?realPer/prevPer:null;
+    let espHoje=null;
+    if(cronIni&&cronFim){ const dc=_diasUteisEntre(cronIni,cronFim).length; if(dc) espHoje= hoje<cronIni?0:(hoje>cronFim?1:_diasUteisEntre(cronIni,hoje).length/dc); }
+    const glPrev=p.goLivePrevisto||"", glAlvo=p.goLiveRealizado||p.goLiveAjustado||p.goLivePrevisto||"";
+    const desvio=(glPrev&&glAlvo&&glAlvo!==glPrev)?_duDelta(glPrev,glAlvo):0;
+    let status;
+    if(p.goLiveRealizado) status="realizado";
+    else if(evol!=null && espHoje!=null) status= evol>=espHoje?"no ritmo":"atrasado";
+    else if(glAlvo && glAlvo<hoje) status="atrasado";
+    else status="—";
+    return {lider:p.lider||"—", projeto:p.nome, gp:p.gp||"—", glPrev, glAlvo, desvio, evol, status, nAtiv:(aloc.length||linhas.length)};
+  });
+  if(!rows.length){ el("repBody").innerHTML='<div class="rep-empty">Nenhum projeto no escopo selecionado.</div>'; _lastRepRows=[]; return; }
+  rows.sort((a,b)=> a.lider.localeCompare(b.lider,"pt")||a.projeto.localeCompare(b.projeto,"pt"));
+  _lastRepRows=rows.map(r=>({lider:r.lider,projeto:r.projeto,gp:r.gp,goLivePrevisto:r.glPrev,goLiveAlvo:r.glAlvo,desvioDU:r.desvio,evolucao:r.evol==null?"":Math.round(r.evol*100)+"%",status:r.status,atividades:r.nAtiv}));
+  _lastRepCols=["lider","projeto","gp","goLivePrevisto","goLiveAlvo","desvioDU","evolucao","status","atividades"];
+  const grupos={}; rows.forEach(r=>{ (grupos[r.lider]=grupos[r.lider]||[]).push(r); });
+  const dm=iso=>iso?fmtDM(parseISO(iso)):"—";
+  const pill=s=> s==="atrasado"?`<span class="rp-st bad">atrasado</span>`:(s==="no ritmo"?`<span class="rp-st ok">no ritmo</span>`:(s==="realizado"?`<span class="rp-st done">realizado</span>`:`<span class="rp-st">—</span>`));
+  const dev=d=> d?`<span class="${d>0?'rp-bad':'rp-ok'}">${d>0?'+':''}${d} d.ú.</span>`:"0";
+  let body="";
+  Object.keys(grupos).sort((a,b)=>a.localeCompare(b,"pt")).forEach(lider=>{
+    const g=grupos[lider], evs=g.filter(r=>r.evol!=null).map(r=>r.evol);
+    const medio=evs.length?Math.round(evs.reduce((s,x)=>s+x,0)/evs.length*100):null;
+    body+=`<tr class="rp-grp"><td colspan="8"><b>${enc(lider)}</b> · ${g.length} projeto(s)${medio!=null?` · evolução média ${medio}%`:""}</td></tr>`;
+    g.forEach(r=>{ body+=`<tr><td>${enc(r.projeto)}</td><td>${enc(r.gp)}</td><td>${dm(r.glPrev)}</td><td>${dm(r.glAlvo)}</td><td>${dev(r.desvio)}</td><td>${r.evol==null?"—":Math.round(r.evol*100)+"%"}</td><td>${pill(r.status)}</td><td class="num">${r.nAtiv}</td></tr>`; });
+  });
+  const head=`<tr><th>Projeto</th><th>GP</th><th>Go-Live prev.</th><th>Aj./Real.</th><th>Desvio</th><th>Evolução</th><th>Status</th><th class="num">Ativ.</th></tr>`;
+  const totProj=rows.length, nLid=Object.keys(grupos).length, atras=rows.filter(r=>r.status==="atrasado").length;
+  const summary=`<div class="rep-summary"><div class="stat"><div class="n">${totProj}</div><div class="l">Projetos</div></div><div class="stat"><div class="n">${nLid}</div><div class="l">Líderes</div></div><div class="stat ${atras?'warn':''}"><div class="n">${atras}</div><div class="l">Atrasados</div></div></div>`;
+  el("repBody").innerHTML=summary+`<table class="rep-table rp-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  lucideRefresh();
+}
 function renderRepGoLive(){
   const hojeISO=toISO(new Date());
   // Considera projetos que tenham ao menos uma das datas preenchidas
@@ -9813,6 +10135,9 @@ function bind(){
   el("kpisBtn").addEventListener("click",openKPIs);
   el("kpiClose").addEventListener("click",closeKPIs);
   el("kpiOverlay").addEventListener("click",e=>{if(e.target.id==="kpiOverlay")closeKPIs();});
+  { const mb=el("mapaBtn"); if(mb)mb.addEventListener("click",openMapa);
+    const mc=el("mapaClose"); if(mc)mc.addEventListener("click",closeMapa);
+    const mo=el("mapaOverlay"); if(mo)mo.addEventListener("click",e=>{if(e.target.id==="mapaOverlay")closeMapa();}); }
   // Esteira de Projetos
   el("esteiraClose").addEventListener("click",closeEsteira);
   el("esteiraOverlay").addEventListener("click",e=>{if(e.target.id==="esteiraOverlay")closeEsteira();});
