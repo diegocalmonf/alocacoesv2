@@ -1520,7 +1520,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.82.0";
+const APP_VERSION = "1.83.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -4670,6 +4670,74 @@ function _impAplicar(p, mapeado){
   return {atividades:mapeado.length, atvCriadas, atvCasadas, tarCriadas, linNovas, linAtual};
 }
 let _impDados=null;
+/* ===================== COPIAR CRONOGRAMA entre projetos (Fase · C1–C5) =====================
+   O projeto DESTINO (aberto no cronograma) puxa a estrutura de um projeto ORIGEM. As datas são
+   REBASEADAS a partir de uma nova data de início (mantém durações e sequência relativa em dias
+   úteis). Analista/slot NÃO são copiados (entram "só plano"). Copia tarefas, incl. avulsas
+   (manual), preservando ordem. Acrescenta ao cronograma atual do destino. Catálogo é global:
+   atividades/tarefas são referenciadas por nome, nada é recriado. */
+function _rebaseISO(srcStart, novoIni, iso){
+  if(!iso) return "";
+  if(!srcStart||!novoIni) return iso;
+  let d=iso; if(d<srcStart)d=srcStart;
+  const off=_diasUteisEntre(srcStart,d).length-1;     // índice (0-based) em dias úteis desde a origem
+  return off<=0 ? novoIni : _avancaDiasUteis(novoIni, off);
+}
+function _copiarCronograma(dest, src, novoIni){
+  const linhasSrc=(src.previstoLinhas||[]).filter(l=>l&&l.atv);
+  if(!linhasSrc.length) return {linhas:0, tarefas:0};
+  let srcStart=""; linhasSrc.forEach(l=>{ if(l.ini&&(!srcStart||l.ini<srcStart))srcStart=l.ini; });
+  const agora=new Date().toISOString(), who=(_currentUser&&_currentUser.email)||"copia";
+  dest.previstoLinhas=dest.previstoLinhas||[];
+  let nL=0, nT=0;
+  linhasSrc.forEach(l=>{
+    const ini=_rebaseISO(srcStart,novoIni,l.ini), fim=_rebaseISO(srcStart,novoIni,l.fim);
+    const tarefas=(Array.isArray(l.tarefas)?l.tarefas:[]).map(t=>{ const o={nome:t.nome, ini:_rebaseISO(srcStart,novoIni,t.ini), fim:_rebaseISO(srcStart,novoIni,t.fim)}; if(t.manual)o.manual=true; nT++; return o; });
+    dest.previstoLinhas.push({id:_pvNovoId(), an:"", slot:"", atv:l.atv, ini, fim, slots:0, iniManual:!!ini, fimManual:!!fim, tarefas, origemCopia:src.nome, criadoEm:agora, criadoPor:who});
+    nL++;
+  });
+  if(dest.previstoAplicadoEm) dest.previstoAplicadoEm="";
+  try{ _pvRecalcChain(dest); }catch(e){}
+  saveReg();
+  return {linhas:nL, tarefas:nT};
+}
+function abrirCopiarCronograma(){
+  if(!canEditAction("cronograma")){ alert("Sem permissão de edição no Cronograma."); return; }
+  const dest=_cronProjNome?_cronProjetos().find(x=>x.nome===_cronProjNome):null;
+  if(!dest){ alert("Selecione no Cronograma o projeto que vai RECEBER a cópia."); return; }
+  const fontes=_cronProjetos().filter(x=>x.nome!==dest.nome && Array.isArray(x.previstoLinhas) && x.previstoLinhas.some(l=>l&&l.atv));
+  if(!fontes.length){ alert("Nenhum outro projeto com cronograma para copiar."); return; }
+  const old=el("cpOverlay"); if(old)old.remove();
+  let novoIniDefault=""; try{ novoIniDefault=_pvAncora(dest)||""; }catch(e){}
+  if(!novoIniDefault) novoIniDefault=toISO(new Date());
+  const ov=document.createElement("div"); ov.id="cpOverlay"; ov.className="imp-overlay";
+  ov.innerHTML=`<div class="imp-modal">
+    <div class="imp-head"><div><b>Copiar cronograma</b><div class="imp-sub">Destino: <b>${enc(dest.nome)}</b> · as linhas entram como “só plano” (sem analista/slot)</div></div><button class="imp-x" id="cpClose">×</button></div>
+    <div class="imp-body">
+      <div class="imp-row"><label>Copiar de</label> <select id="cpFonte">${fontes.map(f=>`<option value="${enc(f.nome)}">${enc(f.nome)}</option>`).join("")}</select> <span class="imp-counts" id="cpResumo"></span></div>
+      <div class="imp-row"><label>Nova data de início (rebasear)</label> <input type="date" id="cpData" value="${enc(novoIniDefault)}"></div>
+      <div class="imp-warn">As datas da origem são <b>rebaseadas</b> a partir da nova data de início, mantendo durações e a sequência relativa. Tarefas (incl. avulsas) e a estrutura são copiadas; analista/slot não. A cópia é <b>acrescentada</b> ao cronograma atual do destino.</div>
+    </div>
+    <div class="imp-foot"><button class="btn" id="cpCancel">Cancelar</button><button class="btn primary" id="cpDo"><i data-lucide="copy"></i> Copiar</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  el("cpClose").onclick=close; el("cpCancel").onclick=close;
+  ov.addEventListener("click",e=>{ if(e.target===ov)close(); });
+  const upd=()=>{ const f=fontes.find(x=>x.nome===el("cpFonte").value); if(!f){ el("cpResumo").textContent=""; return; } let t=0; const ls=(f.previstoLinhas||[]).filter(l=>l&&l.atv); ls.forEach(l=>t+=_tarefasOrdenadas(l).length); el("cpResumo").innerHTML=`→ <b>${ls.length}</b> atividade(s), <b>${t}</b> tarefa(s)`; };
+  el("cpFonte").addEventListener("change",upd); upd();
+  el("cpDo").addEventListener("click",()=>{
+    const src=fontes.find(x=>x.nome===el("cpFonte").value), novoIni=el("cpData").value;
+    if(!src){ alert("Selecione o projeto de origem."); return; }
+    if(!novoIni){ alert("Informe a nova data de início para rebasear."); return; }
+    const destLive=_cronProjetos().find(x=>x.nome===dest.nome)||dest;
+    const r=_copiarCronograma(destLive, src, novoIni);
+    close(); renderCronograma();
+    alert(`Cronograma de "${src.nome}" copiado para "${dest.nome}":\n• ${r.linhas} atividade(s) acrescentada(s)\n• ${r.tarefas} tarefa(s)\n\nAs linhas entraram como “só plano” — atribua analista/slot e ajuste as datas conforme necessário.`);
+  });
+  lucideRefresh();
+}
+
 function abrirImportCronograma(){
   if(!canEditAction("cronograma")){ alert("Sem permissão de edição no Cronograma."); return; }
   const p=_cronProjNome?_cronProjetos().find(x=>x.nome===_cronProjNome):null;
@@ -4967,7 +5035,7 @@ function renderCronograma(){
   const toggleHTML=p?`<div class="cron-viewtoggle" role="tablist" aria-label="Modo de visualização">
       <button class="cvt-btn ${!isGantt?'on':''}" id="cronViewLista" role="tab" aria-selected="${!isGantt}"><i data-lucide="list"></i> Lista</button>
       <button class="cvt-btn ${isGantt?'on':''}" id="cronViewGantt" role="tab" aria-selected="${isGantt}"><i data-lucide="gantt-chart"></i> Gantt</button>
-    </div>${canEditAction("cronograma")?`<button class="cvt-btn cron-import" id="cronImportBtn" title="Importar cronograma de um CSV"><i data-lucide="upload"></i> Importar CSV</button>`:""}`:"";
+    </div>${canEditAction("cronograma")?`<button class="cvt-btn cron-import" id="cronCopyBtn" title="Copiar a estrutura do cronograma de outro projeto"><i data-lucide="copy"></i> Copiar de…</button><button class="cvt-btn cron-import" id="cronImportBtn" title="Importar cronograma de um CSV"><i data-lucide="upload"></i> Importar CSV</button>`:""}`:"";
   const corpo=p
     ? (isGantt?_cronGanttHTML(p):_previstoTabHTML(p))
     : `<div class="hint" style="padding:16px">Escolha um projeto acima para ver e editar o cronograma.</div>`;
@@ -4995,6 +5063,7 @@ function renderCronograma(){
   });
   if(bCmp)bCmp.addEventListener("click",()=>{ _cronCompareBaseline=!_cronCompareBaseline; renderCronograma(); });
   const bImp=el("cronImportBtn"); if(bImp)bImp.addEventListener("click",abrirImportCronograma);
+  const bCopy=el("cronCopyBtn"); if(bCopy)bCopy.addEventListener("click",abrirCopiarCronograma);
   if(p && !isGantt) _bindCronograma(p);
   if(p && isGantt && !_cronEvolReady){
     _garantirHistoricoTudo().then(()=>{ _cronEvolReady=true; if(_cronView==="gantt"&&_cronProjNome===p.nome) renderCronograma(); });
