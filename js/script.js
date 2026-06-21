@@ -2790,6 +2790,7 @@ function renderHome(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
     {action:"esteira",    act:"irPara('esteira')",          ic:"route",            t:"Esteira de projetos",        d:"Tabela e edição de etapas",                m:"abrir"},
     {action:"discovery",  act:"irPara('discovery')",        ic:"search",           t:"Linha do tempo · Discovery", d:"Tabela e edição dos ritos",                m:"abrir"},
     {action:"relatorios", act:"el('reportsBtn').click()",   ic:"file-bar-chart-2", t:"Relatórios",                 d:"Alocação, squads, go-lives, mapa",         m:"abrir"},
+    {action:"relatorios", act:"openMapa()",                 ic:"map",              t:"Mapa do Projeto",            d:"Curva-S, KPIs e linha de Go-Live",         m:"abrir"},
     {action:"kpis",       act:"el('kpisBtn').click()",      ic:"line-chart",       t:"KPIs",                       d:"Indicadores executivos",                   m:"abrir"},
     {action:"atas",       act:"openAtasReport()",           ic:"file-signature",   t:"Atas",                       d:"Controle e indicadores das atas",          m:"abrir"},
     {action:"cadastros",  act:"el('acoesBtn').click()",     ic:"settings-2",       t:"Ações & cadastros",          d:"Analistas, projetos, usuários, rituais",   m:"abrir"},
