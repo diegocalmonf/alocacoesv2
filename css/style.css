@@ -1965,3 +1965,46 @@ body.viewmode-geral .grid-card[data-editable="1"]{cursor:default !important}
 .pvt-del{width:18px;height:18px;line-height:1;border:1px solid var(--line2);background:#fff;border-radius:5px;color:#b04;cursor:pointer;font-size:12px;padding:0;margin-left:2px}
 .pvt-del:hover{border-color:#b04;background:#fff0f3}
 @media(max-width:760px){.pv-inclt select{max-width:100%;flex:1 1 100%}}
+
+/* ===================== CADASTRO · TIPOS DE CHECKLIST (Pré Go-Live · Fase 1A) ===================== */
+.ckl-cad{display:flex;flex-direction:column;gap:14px}
+.ckl-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.ckl-h-t{font-size:16px;font-weight:800;color:#222}
+.ckl-h-s{font-size:12.5px;color:var(--muted);margin-top:2px;max-width:560px}
+.ckl-badge{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;border-radius:6px;padding:1px 7px;margin-left:6px;vertical-align:middle}
+.ckl-badge.ok{color:var(--ok);background:#eaf4ee;border:1px solid #b9dcc6}
+.ckl-badge.off{color:var(--muted);background:#f1f2f5;border:1px solid var(--line2)}
+.ckl-list{display:flex;flex-direction:column;gap:8px}
+.ckl-row{display:flex;align-items:center;justify-content:space-between;gap:12px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.ckl-row-nm{font-size:14px;font-weight:700;color:#222}
+.ckl-row-sub{font-size:12px;color:var(--muted);margin-top:2px}
+.ckl-row-act{display:flex;gap:6px;flex:0 0 auto}
+.ckl-mini{width:30px;height:30px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line2);background:#fff;border-radius:8px;color:#555;cursor:pointer;padding:0}
+.ckl-mini:hover{border-color:var(--proj);color:var(--proj);background:var(--o-50)}
+.ckl-mini.danger:hover{border-color:var(--danger);color:var(--danger);background:#fbeceb}
+.ckl-mini:disabled{opacity:.4;cursor:not-allowed}
+.ckl-mini i{width:15px;height:15px}
+.ckl-form{background:#fff;border:1px solid var(--line);border-radius:13px;padding:16px;box-shadow:0 1px 3px rgba(0,0,0,.04);display:flex;flex-direction:column;gap:14px}
+.ckl-form-top{display:flex;gap:14px;align-items:flex-end;flex-wrap:wrap}
+.ckl-at-tip,.ckl-it-at{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:#444;cursor:pointer;user-select:none}
+.ckl-at-tip input,.ckl-it-at input{width:16px;height:16px;cursor:pointer;accent-color:var(--proj)}
+.ckl-it-head{display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px dashed var(--line);padding-top:12px}
+.ckl-it-cols{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:var(--faint)}
+.ckl-it-total{color:var(--proj);background:var(--o-50);border:1px solid var(--o-200);border-radius:999px;padding:2px 9px;font-size:11px;letter-spacing:0;text-transform:none}
+.ckl-items{display:flex;flex-direction:column;gap:8px}
+.ckl-it{display:flex;align-items:center;gap:8px;background:#fafafa;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+.ckl-it-ord{display:flex;flex-direction:column;gap:2px}
+.ckl-it-ord .ckl-mini{width:22px;height:18px}
+.ckl-it-ord .ckl-mini i{width:12px;height:12px}
+.ckl-it-nm{flex:1;min-width:140px;border:1px solid var(--line2);background:#fff;border-radius:9px;padding:8px 10px;font-size:13px;font-family:inherit;color:#333}
+.ckl-it-pts{width:78px;border:1px solid var(--line2);background:#fff;border-radius:9px;padding:8px 10px;font-size:13px;font-family:inherit;color:#333;text-align:center}
+.ckl-it-nm:focus,.ckl-it-pts:focus,.ckl-form input[type=text]:focus{outline:none;border-color:var(--proj);box-shadow:0 0 0 3px var(--proj-bg)}
+.ckl-it-nm:disabled,.ckl-it-pts:disabled{background:#f6f7f9;color:#999}
+.ckl-empty-it{font-size:12.5px;color:var(--muted);padding:10px;text-align:center;background:#fafafa;border:1px dashed var(--line2);border-radius:10px}
+.ckl-form-f{display:flex;gap:8px;border-top:1px dashed var(--line);padding-top:14px}
+.ckl-ro{display:flex;align-items:center;gap:8px;background:#fff8f1;border:1px solid #fed7aa;color:#9a3412;border-radius:10px;padding:9px 13px;font-size:12.5px;font-weight:600}
+.ckl-ro i{width:16px;height:16px}
+@media(max-width:760px){
+  .ckl-it{flex-wrap:wrap}
+  .ckl-it-nm{flex-basis:100%}
+}
