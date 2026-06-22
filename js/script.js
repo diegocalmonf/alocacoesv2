@@ -111,7 +111,7 @@ function colorFor(s){let h=0;for(let i=0;i<s.length;i++)h=(h*31+s.charCodeAt(i))
 /* ===================== estado ===================== */
 const ALLOC_KEY="alocacoes:v1", REG_KEY="alocacoes:cadastros:v1", CFG_KEY="alocacoesFirebaseConfig";
 let DATA={};                                  // chave -> {atividade, cliente}
-let REG={lideres:[],analistas:[],projetos:[],feriados:[],gps:[],lideresInativos:{},gpsInativos:{},lideresEmails:{},gpsEmails:{},atividades:[],tarefas:[]};// fonte única de cadastros
+let REG={lideres:[],analistas:[],projetos:[],feriados:[],gps:[],lideresInativos:{},gpsInativos:{},lideresEmails:{},gpsEmails:{},atividades:[],tarefas:[],checklistTipos:[]};// fonte única de cadastros
 let consultor=null, weekStart=null, editing=null;
 let viewMode="analista";   // "analista" | "geral"
 let period="semana";       // "dia" | "semana" | "mes"
@@ -1508,6 +1508,23 @@ function seedReg(){
   REG.gps=["EDUARDO SABATINO","GIOVANNI DENARDI","DEIVID FIORIN","WELLEN SANTOS","MARCOS PESSOTTO","WELINGTON SCHIMITZ"];
   REG.atividades=seedAtividades();
   REG.tarefas=seedTarefas();
+  REG.checklistTipos=seedChecklistTipos();
+}
+// Cadastro semente dos TIPOS de checklist Pré Go-Live (categorias do prompt viram tipos
+// editáveis). IDs estáveis para não orfanar a execução já lançada nos projetos.
+// "Impeditivo" é STATUS de execução, não atributo de cadastro — por isso o item não tem
+// campo bloqueante. Só roda em instalação sem dados.
+function seedChecklistTipos(){
+  const hoje=new Date().toISOString();
+  const it=(id,nome,pts)=>({id,nome,pts,ativo:true});
+  const tp=(id,nome,itens)=>({id,nome,ativo:true,createdAt:hoje,createdBy:"sistema",updatedAt:hoje,updatedBy:"sistema",itens:itens.map((x,i)=>Object.assign({},x,{ordem:i}))});
+  return [
+    tp("clt_param","Parametrização Sistêmica",[it("cli_param_cli","Cadastro de clientes",5),it("cli_param_vei","Cadastro de veículos",5),it("cli_param_mot","Cadastro de motoristas",5),it("cli_param_frete","Cadastro de tabelas frete",5)]),
+    tp("clt_integ","Integrações",[it("cli_integ_erp","Integração ERP",10),it("cli_integ_ciot","Integração CIOT",5),it("cli_integ_pef","Integração PEF",5),it("cli_integ_rast","Integração Rastreador",5)]),
+    tp("clt_trein","Treinamentos",[it("cli_trein_op","Treinamento operacional",8),it("cli_trein_bo","Treinamento backoffice",6),it("cli_trein_gest","Treinamento gestores",6)]),
+    tp("clt_valid","Validações Operacionais",[it("cli_valid_cte","Emissão CT-e",5),it("cli_valid_mdfe","Emissão MDF-e",5),it("cli_valid_viag","Fluxo de viagem",5),it("cli_valid_baixa","Baixa operacional",5)]),
+    tp("clt_aprov","Aprovação Cliente",[it("cli_aprov_homol","Homologação cliente",10),it("cli_aprov_aceite","Aceite formal",5)]),
+  ];
 }
 // Cadastro semente de tarefas (exemplos · nível abaixo da atividade). Cada tarefa referencia
 // o NOME de uma atividade existente na seedAtividades(). Só roda em instalação sem dados.
@@ -1591,7 +1608,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.83.1";
+const APP_VERSION = "1.84.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -3861,7 +3878,7 @@ function openActions(){
 }
 function closeActions(){el("actOverlay").classList.remove("open");actEditing=null;}
 function _regKeyPorCadastro(tab){
-  return ({projetos:"projetos",analistas:"analistas",atividades:"atividades",tarefas:"tarefas",lideres:"lideres",gps:"gps",feriados:"feriados"})[tab] || "";
+  return ({projetos:"projetos",analistas:"analistas",atividades:"atividades",tarefas:"tarefas",lideres:"lideres",gps:"gps",feriados:"feriados",checklistTipos:"checklistTipos"})[tab] || "";
 }
 function _carregarCadastroTipo(tab){
   if(!tab) return Promise.resolve();
@@ -3893,6 +3910,7 @@ function renderCadastroHome(){
     ["analistas","Analistas","users","Cadastro de analistas, squads e vínculos"],
     ["atividades","Atividades","tag","Tipos de atividade, exigência de observação e regras"],
     ["tarefas","Tarefas","list-checks","Tarefas vinculadas às atividades (nível abaixo)"],
+    ["checklistTipos","Tipos de Checklist","clipboard-check","Checklists de prontidão (Pré Go-Live) e seus itens"],
     ["lideres","Líderes","user-cog","Cadastro de líderes de implantação"],
     ["gps","Gerentes","user-check","Cadastro de gerentes de projeto"],
     ["feriados","Feriados","calendar-x","Calendário usado nas regras de dias úteis"],
@@ -3918,6 +3936,7 @@ function renderTabs(){
       ["analistas","Analistas","users",REG.analistas.length],
       ["atividades","Atividades","tag",(REG.atividades||[]).length],
       ["tarefas","Tarefas","list-checks",(REG.tarefas||[]).length],
+      ["checklistTipos","Tipos de Checklist","clipboard-check",(REG.checklistTipos||[]).length],
     ]},
     {label:"Pessoas", abas:[
       ["lideres","Líderes","user-cog",REG.lideres.length],
@@ -3946,7 +3965,152 @@ function renderTabs(){
   }));
   lucideRefresh();
 }
-function renderActions(){renderTabs();lucideRefresh();if(!actTab){renderCadastroHome();return;}if(actTab==="usuarios"){renderUsers();return;}if(actTab==="importar"){renderImporter();return;}if(actTab==="auditoria"){renderAuditoria();return;}if(actEditing){renderForm();}else{renderList();}}
+/* ===================== CADASTRO · TIPOS DE CHECKLIST (Pré Go-Live · Fase 1A) =====================
+   Cadastro autocontido (mesmo molde do tratamento especial de "usuarios" em renderActions):
+   não usa o renderList/renderForm genérico — desenha a própria UI em #actBody.
+   Estrutura: REG.checklistTipos = [ {id, nome, ativo, itens:[ {id, nome, pts, ordem, ativo} ]} ].
+   "Não iniciado" e "Impeditivo" são conceitos de EXECUÇÃO (Fase 1B), não de cadastro.
+   Persistência pelo choke-point saveReg(); histórico via audit(). Gate de edição: ação "cadastros". */
+let _cklDraft=null;          // tipo em edição (rascunho) — null = modo lista
+let _cklDraftNew=false;      // true quando o rascunho é um tipo novo
+
+function _cklTipos(){ REG.checklistTipos=REG.checklistTipos||[]; return REG.checklistTipos; }
+function _cklTipoById(id){ return _cklTipos().find(t=>t&&t.id===id)||null; }
+function _cklNewId(prefix){ return prefix+"_"+Date.now().toString(36)+Math.random().toString(36).slice(2,6); }
+function _cklTotalPts(tipo){ return ((tipo&&tipo.itens)||[]).filter(i=>i&&i.ativo!==false).reduce((s,i)=>s+(+i.pts||0),0); }
+function _cklPodeEditar(){ return canEditAction("cadastros"); }
+
+function _cklNovoTipo(){
+  if(!_cklPodeEditar()){ try{ toast&&toast("Apenas administradores editam cadastros."); }catch(e){} return; }
+  _cklDraft={ id:_cklNewId("clt"), nome:"", ativo:true, itens:[] };
+  _cklDraftNew=true; renderChecklistCadastro();
+}
+function _cklEditarTipo(id){
+  const t=_cklTipoById(id); if(!t) return;
+  _cklDraft=JSON.parse(JSON.stringify(t)); _cklDraft.itens=_cklDraft.itens||[];
+  _cklDraftNew=false; renderChecklistCadastro();
+}
+function _cklVoltar(){ _cklDraft=null; _cklDraftNew=false; renderChecklistCadastro(); }
+function _cklDraftSetNome(v){ if(_cklDraft) _cklDraft.nome=(v||"").slice(0,120); }
+function _cklDraftToggleAtivo(v){ if(_cklDraft) _cklDraft.ativo=!!v; }
+function _cklDraftAddItem(){
+  if(!_cklDraft) return;
+  _cklDraft.itens=_cklDraft.itens||[];
+  _cklDraft.itens.push({ id:_cklNewId("cli"), nome:"", pts:5, ordem:_cklDraft.itens.length, ativo:true });
+  renderChecklistCadastro();
+}
+function _cklDraftItem(itemId){ return ((_cklDraft&&_cklDraft.itens)||[]).find(i=>i&&i.id===itemId)||null; }
+function _cklDraftItemSetNome(itemId,v){ const i=_cklDraftItem(itemId); if(i) i.nome=(v||"").slice(0,160); }
+function _cklDraftItemSetPts(itemId,v){ const i=_cklDraftItem(itemId); if(i){ let n=parseInt(v,10); if(!isFinite(n)||n<0)n=0; if(n>1000)n=1000; i.pts=n; renderChecklistCadastro(); } }
+function _cklDraftItemToggle(itemId,v){ const i=_cklDraftItem(itemId); if(i){ i.ativo=!!v; renderChecklistCadastro(); } }
+function _cklDraftItemRemove(itemId){
+  if(!_cklDraft) return;
+  _cklDraft.itens=(_cklDraft.itens||[]).filter(i=>i&&i.id!==itemId);
+  _cklDraft.itens.forEach((i,idx)=>i.ordem=idx);
+  renderChecklistCadastro();
+}
+function _cklDraftItemMove(itemId,dir){
+  if(!_cklDraft) return;
+  const arr=_cklDraft.itens||[]; const i=arr.findIndex(x=>x&&x.id===itemId); if(i<0) return;
+  const j=i+(dir<0?-1:1); if(j<0||j>=arr.length) return;
+  const tmp=arr[i]; arr[i]=arr[j]; arr[j]=tmp; arr.forEach((x,idx)=>x.ordem=idx);
+  renderChecklistCadastro();
+}
+function _cklSalvar(){
+  if(!_cklPodeEditar()||!_cklDraft) return;
+  const nome=(_cklDraft.nome||"").trim();
+  if(!nome){ alert("Informe o nome do tipo de checklist."); return; }
+  const dup=_cklTipos().some(t=>t&&t.id!==_cklDraft.id && (t.nome||"").trim().toLowerCase()===nome.toLowerCase());
+  if(dup){ alert("Já existe um tipo de checklist com esse nome."); return; }
+  const itens=(_cklDraft.itens||[]).filter(i=>((i.nome||"").trim()))
+                                   .map((i,idx)=>({ id:i.id||_cklNewId("cli"), nome:(i.nome||"").trim(), pts:Math.max(0,+i.pts||0), ordem:idx, ativo:i.ativo!==false }));
+  const hoje=new Date().toISOString(), user=(_currentUser&&_currentUser.email)||"sistema";
+  const tipos=_cklTipos();
+  const idx=tipos.findIndex(t=>t&&t.id===_cklDraft.id);
+  const before=idx>=0?JSON.parse(JSON.stringify(tipos[idx])):null;
+  const rec={ id:_cklDraft.id, nome, ativo:_cklDraft.ativo!==false, itens,
+              createdAt:(before&&before.createdAt)||hoje, createdBy:(before&&before.createdBy)||user,
+              updatedAt:hoje, updatedBy:user };
+  if(idx>=0) tipos[idx]=rec; else tipos.push(rec);
+  saveReg();
+  try{ audit(_cklDraftNew?"checklist.tipo.criar":"checklist.tipo.editar", nome, before, rec); }catch(e){}
+  _cklDraft=null; _cklDraftNew=false; renderChecklistCadastro();
+}
+function _cklRemoverTipo(id){
+  if(!_cklPodeEditar()) return;
+  const t=_cklTipoById(id); if(!t) return;
+  if(!confirm(`Remover o tipo de checklist "${t.nome}"?\n\nOs projetos que já tiverem esse checklist vinculado deixarão de contabilizá-lo. A execução já lançada permanece no histórico (auditoria).`)) return;
+  REG.checklistTipos=_cklTipos().filter(x=>x&&x.id!==id);
+  saveReg();
+  try{ audit("checklist.tipo.remover", t.nome, t, null); }catch(e){}
+  renderChecklistCadastro();
+}
+
+function _cklListaHTML(){
+  const tipos=_cklTipos().slice();
+  const ro=!_cklPodeEditar();
+  const addBtn=ro?"":`<button class="btn primary" onclick="_cklNovoTipo()"><i data-lucide="plus"></i>Novo tipo</button>`;
+  if(!tipos.length){
+    return `<div class="ckl-head"><div><div class="ckl-h-t">Tipos de Checklist</div><div class="ckl-h-s">Cada tipo é um checklist com itens próprios. Projetos vinculam um ou mais tipos.</div></div>${addBtn}</div>
+      <div class="rep-empty">Nenhum tipo cadastrado ainda.${ro?"":" Clique em <b>Novo tipo</b> para começar."}</div>`;
+  }
+  const rows=tipos.map(t=>{
+    const nAtivos=((t.itens||[]).filter(i=>i&&i.ativo!==false)).length, nTot=(t.itens||[]).length;
+    const st=t.ativo!==false?`<span class="ckl-badge ok">Ativo</span>`:`<span class="ckl-badge off">Inativo</span>`;
+    const acoes=ro?"":`<button class="ckl-mini" title="Editar" onclick="_cklEditarTipo('${t.id}')"><i data-lucide="pencil"></i></button>
+        <button class="ckl-mini danger" title="Remover" onclick="_cklRemoverTipo('${t.id}')"><i data-lucide="trash-2"></i></button>`;
+    return `<div class="ckl-row">
+      <div class="ckl-row-main"><div class="ckl-row-nm">${enc(t.nome)} ${st}</div>
+        <div class="ckl-row-sub">${nAtivos} item(ns) ativo(s)${nTot!==nAtivos?` · ${nTot} no total`:""} · ${_cklTotalPts(t)} pts</div></div>
+      <div class="ckl-row-act">${acoes}</div>
+    </div>`;
+  }).join("");
+  return `<div class="ckl-head"><div><div class="ckl-h-t">Tipos de Checklist</div><div class="ckl-h-s">Cada tipo é um checklist com itens próprios. Projetos vinculam um ou mais tipos.</div></div>${addBtn}</div>
+    <div class="ckl-list">${rows}</div>`;
+}
+function _cklFormHTML(){
+  const d=_cklDraft, ro=!_cklPodeEditar(), dis=ro?"disabled":"";
+  const itens=(d.itens||[]);
+  const linhas=itens.map((i,idx)=>`<div class="ckl-it">
+      <div class="ckl-it-ord">
+        <button class="ckl-mini" title="Subir" ${idx===0||ro?"disabled":""} onclick="_cklDraftItemMove('${i.id}',-1)"><i data-lucide="chevron-up"></i></button>
+        <button class="ckl-mini" title="Descer" ${idx===itens.length-1||ro?"disabled":""} onclick="_cklDraftItemMove('${i.id}',1)"><i data-lucide="chevron-down"></i></button>
+      </div>
+      <input class="ckl-it-nm" type="text" maxlength="160" placeholder="Nome do item" value="${enc(i.nome||"")}" ${dis} onchange="_cklDraftItemSetNome('${i.id}',this.value)">
+      <input class="ckl-it-pts" type="number" min="0" max="1000" step="1" title="Pontos" value="${enc(String(i.pts!=null?i.pts:0))}" ${dis} onchange="_cklDraftItemSetPts('${i.id}',this.value)">
+      <label class="ckl-it-at" title="Item ativo"><input type="checkbox" ${i.ativo!==false?"checked":""} ${dis} onchange="_cklDraftItemToggle('${i.id}',this.checked)"><span>ativo</span></label>
+      ${ro?"":`<button class="ckl-mini danger" title="Remover item" onclick="_cklDraftItemRemove('${i.id}')"><i data-lucide="x"></i></button>`}
+    </div>`).join("");
+  const totalPts=_cklTotalPts(d);
+  const addItem=ro?"":`<button class="btn sm" onclick="_cklDraftAddItem()"><i data-lucide="plus"></i>Adicionar item</button>`;
+  const footer=ro?`<div class="ckl-ro"><i data-lucide="eye"></i> Somente leitura — apenas administradores editam cadastros.</div>`
+    :`<div class="ckl-form-f"><button class="btn primary" onclick="_cklSalvar()"><i data-lucide="check"></i>Salvar tipo</button>
+        <button class="btn" onclick="_cklVoltar()"><i data-lucide="x"></i>Cancelar</button></div>`;
+  return `<div class="ckl-head"><div><div class="ckl-h-t">${_cklDraftNew?"Novo tipo de checklist":"Editar tipo de checklist"}</div>
+      <div class="ckl-h-s">Defina o nome e os itens. O peso de cada item é a pontuação; o peso do tipo é a soma dos pontos.</div></div>
+      <button class="btn" onclick="_cklVoltar()"><i data-lucide="arrow-left"></i>Voltar</button></div>
+    <div class="ckl-form">
+      <div class="ckl-form-top">
+        <div class="f" style="flex:1;min-width:220px"><label>Nome do tipo <span style="color:var(--proj)">*</span></label>
+          <input type="text" maxlength="120" placeholder="Ex.: Integrações" value="${enc(d.nome||"")}" ${dis} onchange="_cklDraftSetNome(this.value)" style="width:100%;background:#fff;border:1px solid var(--line2);border-radius:10px;padding:10px 12px;font-size:13.5px;font-family:inherit"></div>
+        <label class="ckl-at-tip" title="Tipo ativo"><input type="checkbox" ${d.ativo!==false?"checked":""} ${dis} onchange="_cklDraftToggleAtivo(this.checked)"><span>Tipo ativo</span></label>
+      </div>
+      <div class="ckl-it-head">
+        <div class="ckl-it-cols"><span>Itens do checklist</span><span class="ckl-it-total">${totalPts} pts no total</span></div>
+        ${addItem}
+      </div>
+      <div class="ckl-items">${linhas||`<div class="ckl-empty-it">Nenhum item. ${ro?"":"Clique em <b>Adicionar item</b>."}</div>`}</div>
+      ${footer}
+    </div>`;
+}
+function renderChecklistCadastro(){
+  const b=el("actBody"); if(!b) return;
+  REG.checklistTipos=REG.checklistTipos||[];
+  b.innerHTML=`<div class="ckl-cad">${_cklDraft?_cklFormHTML():_cklListaHTML()}</div>`;
+  lucideRefresh();
+}
+
+function renderActions(){renderTabs();lucideRefresh();if(actTab!=="checklistTipos")_cklDraft=null;if(!actTab){renderCadastroHome();return;}if(actTab==="checklistTipos"){renderChecklistCadastro();return;}if(actTab==="usuarios"){renderUsers();return;}if(actTab==="importar"){renderImporter();return;}if(actTab==="auditoria"){renderAuditoria();return;}if(actEditing){renderForm();}else{renderList();}}
 
 function renderList(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
   const b=el("actBody");
