@@ -535,6 +535,70 @@ function arrayToPrev(arr){
   });
   return m;
 }
+/* ===================== BUCKETS · chave segura p/ RTDB (correção do sumiço de alocações) =====================
+   CAUSA-RAIZ: os buckets (alocacoes/data e alocacoes/previsto) eram gravados como OBJETO
+   indexado pela chave completa "Nome__iso__slot". Quando o Nome contém "." (ex.: "Diego M.")
+   — caractere PROIBIDO em chaves do RTDB (. # $ [ ] /) — o update() LANÇA de forma SÍNCRONA
+   e o persist inteiro do mês falha em silêncio: a alocação aparece em tela (memória/localStorage)
+   mas NUNCA chega à nuvem, sumindo na recarga. Comprovado com firebase@10 (update() rejeitou
+   a chave "Diego M.__..."). Correção: gravar a chave PERCENT-ENCODED e carregar c/iso/slot no
+   VALOR, reconstruindo a chave DATA real na leitura. Compatível com buckets legados (array do
+   monólito e objeto de chave-limpa sem c/iso/slot). */
+function _encBucketKey(k){
+  // Escapa os caracteres ilegais em chaves do RTDB (inclui % p/ ser reversível) e controles.
+  return String(k).replace(/[%.#$/\[\]\u0000-\u001F\u007F]/g, ch => "%" + ch.charCodeAt(0).toString(16).toUpperCase().padStart(2, "0"));
+}
+// Extrai os campos de registro (sem c/iso/slot) de um valor de bucket de REALIZADO.
+function _allocRegFromBucketVal(v){
+  const reg = {};
+  if(v.atividade!=null)   reg.atividade   = v.atividade;
+  if(v.cliente!=null)     reg.cliente     = v.cliente;
+  if(v.obs!=null)         reg.obs         = v.obs;
+  if(v.obsAt!=null)       reg.obsAt       = v.obsAt;
+  if(v.obsBy!=null)       reg.obsBy       = v.obsBy;
+  if(v.obsPendente!=null) reg.obsPendente = v.obsPendente;
+  if(v.feriado!=null)     reg.feriado     = v.feriado;
+  return reg;
+}
+// Converte um nó de bucket de REALIZADO em mapa DATA, aceitando TODAS as formas:
+//  • array (monólito/legado)                  → arrayToAlloc
+//  • objeto novo (valor tem c/iso/slot)        → reconstrói key(c,iso,slot)
+//  • objeto legado (chave = chave DATA limpa)  → usa a própria chave
+function _allocBucketToMap(v){
+  const m = {};
+  if(!v) return m;
+  if(Array.isArray(v)) return arrayToAlloc(v);
+  Object.entries(v).forEach(([k, rec])=>{
+    if(!rec || typeof rec!=="object") return;
+    if(rec.c!=null && rec.iso!=null && rec.slot!=null){ m[key(rec.c, rec.iso, rec.slot)] = _allocRegFromBucketVal(rec); }
+    else { m[k] = rec; }
+  });
+  return m;
+}
+// Extrai os campos de registro (sem c/iso/slot) de um valor de bucket de PREVISTO.
+function _prevRegFromBucketVal(v){
+  const reg = {};
+  if(v.atividade!=null) reg.atividade = v.atividade;
+  if(v.cliente!=null)   reg.cliente   = v.cliente;
+  if(v.origem!=null)    reg.origem    = v.origem;
+  if(v.linha!=null)     reg.linha     = v.linha;
+  if(v.obs!=null)       reg.obs       = v.obs;
+  if(v.obsAt!=null)     reg.obsAt     = v.obsAt;
+  if(v.obsBy!=null)     reg.obsBy     = v.obsBy;
+  return reg;
+}
+// Idem para PREVISTO (espelha _allocBucketToMap).
+function _prevBucketToMap(v){
+  const m = {};
+  if(!v) return m;
+  if(Array.isArray(v)) return arrayToPrev(v);
+  Object.entries(v).forEach(([k, rec])=>{
+    if(!rec || typeof rec!=="object") return;
+    if(rec.c!=null && rec.iso!=null && rec.slot!=null){ m[key(rec.c, rec.iso, rec.slot)] = _prevRegFromBucketVal(rec); }
+    else { m[k] = rec; }
+  });
+  return m;
+}
 function lsSavePrev(){ try{ localStorage.setItem(PREV_KEY, JSON.stringify(PREV)); }catch(e){} }
 /* Acessores públicos da camada previsto (preservam "ausência = nada planejado").
    Em Fase 1 ninguém os chama ainda; são a API para as Fases 3/4. */
@@ -547,11 +611,16 @@ function _persistNow(){
   _persistPending=false;
   if(!_db||!_fbReady||!_initialLoadDone) return _persistLast;
   if(ALLOC_WINDOWED_READ){
+    // Blindagem: se _writeWindowBuckets lançar SÍNCRONO (ex.: chave inválida no RTDB),
+    // não pode derrubar o persist em silêncio. Captura, sinaliza erro e segue gravando o reg.
+    let bucketsP;
+    try{ bucketsP = Promise.resolve(_writeWindowBuckets()); }
+    catch(e){ console.error("[janela] write lançou (alocações NÃO foram para a nuvem):", e); setSyncBadge("erro"); bucketsP = Promise.reject(e); }
     _persistLast=Promise.all([
       _db.ref(DB_PATH+"/reg").set(sanitizeForFirebase(REG)),
-      Promise.resolve(_writeWindowBuckets())
+      bucketsP
     ]).then(()=>{ setSyncBadge("online"); try{ if(typeof _publishAlocSnapshot==='function') _publishAlocSnapshot(); }catch(e){} })
-      .catch(err=>{ setSyncBadge("erro"); if(err&&err.code==="PERMISSION_DENIED")alert("Sem permissão para salvar (verifique as Regras do Firebase ou seu perfil)."); });
+      .catch(err=>{ setSyncBadge("erro"); if(err&&err.code==="PERMISSION_DENIED")alert("Sem permissão para salvar (verifique as Regras do Firebase ou seu perfil)."); else console.warn("[janela] persist falhou:", err); });
     return _persistLast;
   }
   _persistLast=_db.ref(DB_PATH).set(sanitizeForFirebase({reg:REG,alloc:allocToArray()}))
@@ -583,15 +652,22 @@ function saveReg(){persist();}
 function _prevPorMes(){
   const byMonth={};
   Object.entries(PREV).forEach(([k, r])=>{
-    const m = (k.split("__")[1]||"").slice(0,7); 
-    if(!m) return;
+    const i = k.split("__"); const c = i[0]; const iso = i[1]; const slot = i.slice(2).join("__");
+    const m = (iso||"").slice(0,7);
+    if(!m || !c || !iso) return;
     byMonth[m] = byMonth[m] || {};
-    const limpo = {};
-    if(r.atividade!=null) limpo.atividade = r.atividade;
-    if(r.cliente!=null)   limpo.cliente = r.cliente;
-    if(r.origem!=null)    limpo.origem = r.origem;
-    if(r.linha!=null)     limpo.linha = r.linha;
-    byMonth[m][k] = limpo;
+    // c/iso/slot vão no VALOR (nunca na chave) p/ não esbarrar na proibição de "." em chaves do RTDB.
+    const o = { c, iso, slot };
+    if(r){
+      if(r.atividade!=null) o.atividade = r.atividade;
+      if(r.cliente!=null)   o.cliente   = r.cliente;
+      if(r.origem!=null)    o.origem    = r.origem;
+      if(r.linha!=null)     o.linha     = r.linha;
+      if(r.obs!=null)       o.obs       = r.obs;
+      if(r.obsAt!=null)     o.obsAt     = r.obsAt;
+      if(r.obsBy!=null)     o.obsBy     = r.obsBy;
+    }
+    byMonth[m][_encBucketKey(k)] = o;
   });
   return byMonth;
 }
@@ -628,17 +704,22 @@ function _mesDe(iso){ return (iso||"").slice(0,7); } // "YYYY-MM-DD" -> "YYYY-MM
 function _allocPorMes(){
   const byMonth={};
   Object.entries(DATA).forEach(([k, r])=>{
-    const m = (k.split("__")[1]||"").slice(0,7); 
-    if(!m) return;
+    const i = k.split("__"); const c = i[0]; const iso = i[1]; const slot = i.slice(2).join("__");
+    const m = (iso||"").slice(0,7);
+    if(!m || !c || !iso) return;
     byMonth[m] = byMonth[m] || {};
-    const limpo = {};
-    if(r.atividade!=null) limpo.atividade = r.atividade;
-    if(r.cliente!=null)   limpo.cliente = r.cliente;
-    if(r.obs!=null)       limpo.obs = r.obs;
-    if(r.obsAt!=null)     limpo.obsAt = r.obsAt;
-    if(r.obsBy!=null)     limpo.obsBy = r.obsBy;
-    if(r.feriado!=null)   limpo.feriado = r.feriado;
-    byMonth[m][k] = limpo;
+    // c/iso/slot vão no VALOR (nunca na chave) p/ não esbarrar na proibição de "." em chaves do RTDB.
+    const o = { c, iso, slot };
+    if(r){
+      if(r.atividade!=null)   o.atividade   = r.atividade;
+      if(r.cliente!=null)     o.cliente     = r.cliente;
+      if(r.obs!=null)         o.obs         = r.obs;
+      if(r.obsAt!=null)       o.obsAt       = r.obsAt;
+      if(r.obsBy!=null)       o.obsBy       = r.obsBy;
+      if(r.obsPendente!=null) o.obsPendente = r.obsPendente;
+      if(r.feriado!=null)     o.feriado     = r.feriado;
+    }
+    byMonth[m][_encBucketKey(k)] = o;
   });
   return byMonth;
 }
@@ -799,14 +880,7 @@ function _lerTodosBuckets(){
   return _db.ref(ALLOC_DATA_PATH).once("value").then(s=>{
     const v=s.val()||{}; 
     const mapResult = {};
-    Object.keys(v).forEach(m=>{ 
-      const mesData = v[m];
-      if (Array.isArray(mesData)) {
-         Object.assign(mapResult, arrayToAlloc(mesData));
-      } else {
-         Object.assign(mapResult, mesData);
-      }
-    });
+    Object.keys(v).forEach(m=>{ Object.assign(mapResult, _allocBucketToMap(v[m])); });
     if(Object.keys(mapResult).length) return mapResult;
     return _db.ref(DB_PATH+"/alloc").once("value").then(s2=>arrayToAlloc(s2.val()||[]));
   });
@@ -845,9 +919,7 @@ function _lerBucketsPorPeriodo(dataInicioStr, dataFimStr){
   const mapResult = {};
   const promises = Array.from(mesesAlvo).map(m => {
     return _db.ref(ALLOC_DATA_PATH + "/" + m).once("value").then(s => {
-      const v = s.val() || {};
-      if(Array.isArray(v)) Object.assign(mapResult, arrayToAlloc(v));
-      else Object.assign(mapResult, v);
+      Object.assign(mapResult, _allocBucketToMap(s.val()));
     });
   });
 
@@ -880,9 +952,7 @@ function _lerBucketsPrevPorPeriodo(dataInicioStr, dataFimStr){
   const mapResult = {};
   const promises = Array.from(mesesAlvo).map(m => {
     return _db.ref(PREV_DATA_PATH + "/" + m).once("value").then(s => {
-      const v = s.val() || {};
-      if(Array.isArray(v)) Object.assign(mapResult, arrayToPrev(v));
-      else Object.assign(mapResult, v);
+      Object.assign(mapResult, _prevBucketToMap(s.val()));
     });
   });
 
@@ -1115,6 +1185,12 @@ function _writeWindowBuckets(){
     const js=JSON.stringify(byMonth[m]);
     if(_lastBucketJSON[m]!==js){ updates[m]=byMonth[m]; _lastBucketJSON[m]=js; }
   });
+  // Mês carregado que ficou SEM nenhuma alocação (todos os slots liberados): zera o
+  // bucket. Guardado por _mesesCarregados p/ jamais apagar mês fora da janela.
+  // ("Livre = ausência de registro" também vale para o bucket inteiro.)
+  Object.keys(_lastBucketJSON).forEach(m=>{
+    if(!(m in byMonth) && _mesesCarregados.has(m)){ updates[m]=null; delete _lastBucketJSON[m]; }
+  });
   const chaves=Object.keys(updates);
   if(!chaves.length) return;
   return _db.ref(ALLOC_DATA_PATH).update(sanitizeForFirebase(updates))
@@ -1142,15 +1218,17 @@ function _carregarJanela(meses){
     _janelaListeners[m]=ref;
     
     ref.once("value", s => {
-      const v = s.val();
-      if(v && !Array.isArray(v)) Object.assign(DATA, v);
-      else if(v && Array.isArray(v)) Object.assign(DATA, arrayToAlloc(v));
+      Object.assign(DATA, _allocBucketToMap(s.val()));
       _mesesCarregados.add(m); // bucket confirmado (mesmo vazio): a partir daqui é seguro regravar este mês
       try{ if(typeof telaAtual!=="undefined" && telaAtual==="grade" && typeof renderAll==="function") renderAll(); }catch(e){}
-      
-      ref.on("child_added", child => { DATA[child.key] = child.val(); });
-      ref.on("child_changed", child => { DATA[child.key] = child.val(); try{ if(typeof telaAtual!=="undefined" && telaAtual==="grade") renderAll(); }catch(e){} });
-      ref.on("child_removed", child => { delete DATA[child.key]; try{ if(typeof telaAtual!=="undefined" && telaAtual==="grade") renderAll(); }catch(e){} });
+
+      // Live: reconstrói a chave DATA a partir do VALOR (c/iso/slot) p/ a forma nova;
+      // cai na própria chave do child p/ buckets legados de chave-limpa.
+      const _dk = ch => { const v=ch.val(); return (v && v.c!=null) ? key(v.c, v.iso, v.slot) : ch.key; };
+      const _rg = ch => { const v=ch.val(); return (v && v.c!=null) ? _allocRegFromBucketVal(v) : v; };
+      ref.on("child_added",   ch => { const v=ch.val(); if(v&&typeof v==="object") DATA[_dk(ch)] = _rg(ch); });
+      ref.on("child_changed", ch => { const v=ch.val(); if(v&&typeof v==="object") DATA[_dk(ch)] = _rg(ch); try{ if(typeof telaAtual!=="undefined" && telaAtual==="grade") renderAll(); }catch(e){} });
+      ref.on("child_removed", ch => { delete DATA[_dk(ch)]; try{ if(typeof telaAtual!=="undefined" && telaAtual==="grade") renderAll(); }catch(e){} });
     });
   });
 }
@@ -1165,14 +1243,7 @@ function _lerTodosBucketsPrev(){
   return _db.ref(PREV_DATA_PATH).once("value").then(s=>{
     const v=s.val()||{}; 
     const mapResult = {};
-    Object.keys(v).forEach(m=>{ 
-      const mesData = v[m];
-      if (Array.isArray(mesData)) {
-         Object.assign(mapResult, arrayToPrev(mesData));
-      } else {
-         Object.assign(mapResult, mesData);
-      }
-    });
+    Object.keys(v).forEach(m=>{ Object.assign(mapResult, _prevBucketToMap(v[m])); });
     return mapResult;
   });
 }
@@ -1201,13 +1272,13 @@ function _carregarJanelaPrev(meses){
     _janelaListenersPrev[m]=ref;
     
     ref.once("value", s => {
-      const v = s.val();
-      if(v && !Array.isArray(v)) Object.assign(PREV, v);
-      else if(v && Array.isArray(v)) Object.assign(PREV, arrayToPrev(v));
-      
-      ref.on("child_added", child => { PREV[child.key] = child.val(); });
-      ref.on("child_changed", child => { PREV[child.key] = child.val(); });
-      ref.on("child_removed", child => { delete PREV[child.key]; });
+      Object.assign(PREV, _prevBucketToMap(s.val()));
+
+      const _dk = ch => { const v=ch.val(); return (v && v.c!=null) ? key(v.c, v.iso, v.slot) : ch.key; };
+      const _rg = ch => { const v=ch.val(); return (v && v.c!=null) ? _prevRegFromBucketVal(v) : v; };
+      ref.on("child_added",   ch => { const v=ch.val(); if(v&&typeof v==="object") PREV[_dk(ch)] = _rg(ch); });
+      ref.on("child_changed", ch => { const v=ch.val(); if(v&&typeof v==="object") PREV[_dk(ch)] = _rg(ch); });
+      ref.on("child_removed", ch => { delete PREV[_dk(ch)]; });
     });
   });
 }
@@ -1520,7 +1591,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.83.0";
+const APP_VERSION = "1.83.1";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -4865,7 +4936,7 @@ function _mesesEntre(de,ate){ const out=[]; if(!de||!ate)return out; let d=parse
 function _mapaCarregarMeses(meses){
   if(!_db || !ALLOC_WINDOWED_READ || _histCompleto) return Promise.resolve();
   const ps=(meses||[]).map(m=>new Promise(res=>{
-    try{ _db.ref(ALLOC_DATA_PATH+"/"+m).once("value", s=>{ const v=s.val(); if(v&&!Array.isArray(v)) Object.assign(DATA,v); else if(v&&Array.isArray(v)) Object.assign(DATA, arrayToAlloc(v)); res(); }, ()=>res()); }catch(e){ res(); }
+    try{ _db.ref(ALLOC_DATA_PATH+"/"+m).once("value", s=>{ Object.assign(DATA, _allocBucketToMap(s.val())); res(); }, ()=>res()); }catch(e){ res(); }
   }));
   return Promise.all(ps);
 }
