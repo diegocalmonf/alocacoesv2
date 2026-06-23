@@ -220,6 +220,7 @@ const ACTIONS = [
   {id:"relatorios", label:"Relatórios",           icon:"file-bar-chart-2",  desc:"Alocação, squads, go-lives, mapa", readOnly:true},
   {id:"kpis",       label:"KPIs",                 icon:"line-chart",        desc:"Indicadores executivos", readOnly:true},
   {id:"atas",       label:"Atas",                 icon:"file-signature",    desc:"Geração e controle das atas dos slots"},
+  {id:"pregolive",  label:"Checklist",            icon:"clipboard-check",   desc:"Checklist de itens por projeto"},
   {id:"cadastros",  label:"Ações & Cadastros",    icon:"settings-2",        desc:"Analistas, projetos, atividades, rituais"},
 ];
 const ACTION_BY_ID = Object.fromEntries(ACTIONS.map(a=>[a.id,a]));
@@ -241,6 +242,7 @@ const ACTION_DEFAULTS = {
   relatorios: {admin:"read", gestor:"read", lider:"read", gp:"read", analista:"read", leitura:"read"},
   kpis:       {admin:"read", gestor:"read", lider:"read", gp:"read", analista:"read", leitura:"read"},
   atas:       {admin:"edit", gestor:"edit", lider:"edit", gp:"read", analista:"read", leitura:"read"},
+  pregolive:  {admin:"edit", gestor:"edit", lider:"edit", gp:"edit", analista:"edit", leitura:"read"},
   cadastros:  {admin:"edit", gestor:"none", lider:"none", gp:"none", analista:"none", leitura:"none"},
 };
 function _normLevel(v){ return (v==="none"||v==="read"||v==="edit") ? v : null; }
@@ -926,6 +928,68 @@ function _lerBucketsPorPeriodo(dataInicioStr, dataFimStr){
   return Promise.all(promises).then(() => mapResult);
 }
 
+// Enumera os meses "YYYY-MM" cobertos por [ini, fim], inclusive, operando sobre strings
+// para evitar o bug de overflow de fim-de-mês do Date.setMonth (ex.: 31/01 pulando fevereiro).
+function _mesesNoIntervalo(dataInicioStr, dataFimStr){
+  const out = [];
+  if(!dataInicioStr || !dataFimStr) return out;
+  let y = +dataInicioStr.slice(0,4), mo = +dataInicioStr.slice(5,7);
+  const yF = +dataFimStr.slice(0,4), moF = +dataFimStr.slice(5,7);
+  while(y < yF || (y === yF && mo <= moF)){
+    out.push(y + "-" + String(mo).padStart(2,"0"));
+    mo++; if(mo > 12){ mo = 1; y++; }
+  }
+  return out;
+}
+
+// Fase 1 — leitura ESCOPADA: baixa apenas os registros dos analistas do escopo (lider/squad/gp/analista),
+// em vez do bucket mensal inteiro. Usa orderByChild("c").equalTo(nome) por nome/mês.
+// PRÉ-REQUISITO: regra Firebase `.indexOn: ["c"]` nos buckets de alocacoes/data/$mes — sem ela o RTDB
+// baixa o nó inteiro e filtra no cliente (zero economia + warning). Sem índice => sem ganho.
+function _lerBucketsEscopadoPorPeriodo(dataInicioStr, dataFimStr, nomesSet){
+  if(!_db) return Promise.resolve({});
+  if(!dataInicioStr || !dataFimStr) return Promise.resolve({});
+  const nomes = Array.from(nomesSet || []);
+  if(!nomes.length) return Promise.resolve({}); // escopo vazio => nada a baixar
+
+  const mesesAlvo = _mesesNoIntervalo(dataInicioStr, dataFimStr);
+
+  const mapResult = {};
+  const promises = [];
+  mesesAlvo.forEach(m => {
+    nomes.forEach(nome => {
+      promises.push(
+        _db.ref(ALLOC_DATA_PATH + "/" + m).orderByChild("c").equalTo(nome).once("value").then(s => {
+          Object.assign(mapResult, _allocBucketToMap(s.val()));
+        })
+      );
+    });
+  });
+  return Promise.all(promises).then(() => mapResult);
+}
+
+// Fase 2 — KPIs comparam o período atual com o "período anterior" de mesma duração (deltas ↑/↓).
+// No modo escopado os dados são isolados/filtrados, então a janela de download recua para cobrir esse
+// período anterior (senão o delta zeraria). Espelha a fórmula do comparativo em _renderKPIs:
+//   ndias = dias úteis no período;  prevIni = inicio - ndias (dias corridos).
+function _kpiPrevIni(iniISO, fimISO){
+  if(!iniISO || !fimISO) return iniISO;
+  const a=parseISO(iniISO), b=parseISO(fimISO);
+  let n=0; for(let d=new Date(a); d<=b; d=addDays(d,1)){const w=d.getDay(); if(w>=1&&w<=5)n++;}
+  if(n<=0) return iniISO;
+  return toISO(addDays(a, -n));
+}
+
+// Resolve um escopo de relatório para o conjunto de nomes a baixar.
+// Retorna null quando a carga deve trazer o mês cheio: "todos" (precisa de tudo) e
+// "tipoatv:" (conjunto derivado do próprio DATA — ovo-e-galinha, exceção documentada / D4).
+function _escopoParaNomes(escopo, diasIso, ancoraData){
+  if(!escopo || escopo === "todos") return null;
+  if(escopo.startsWith("tipoatv:")) return null;
+  const ns = _aplicaEscopo(visibleAnalysts(ancoraData || repTo || undefined), escopo, diasIso || new Set());
+  return new Set(ns);
+}
+
 function filtrarDadosPorDataExata(dadosBrutos, dataInicioStr, dataFimStr){
   const dadosFiltrados = {};
   Object.keys(dadosBrutos || {}).forEach(k => {
@@ -1129,13 +1193,35 @@ function atualizarPainelAtivo(tipo){
   _setLoadingPainel(tipo);
 
   const precisaPrevisto = (tipo === "relatorios" && repTab === "aderencia");
-  const cargaRealizado = _lerBucketsPorPeriodo(inicio, fim);
+  // Fase 1/2 — carga escopada: baixa só os analistas do escopo quando ele resolve para um conjunto.
+  //   Relatórios: piloto na aba "alocacao".  KPIs: todas as abas (kpiAnalysts já restringe a renderização).
+  // Escopos "todos" e "tipoatv:" caem no caminho de mês cheio (ver _escopoParaNomes / D4).
+  let _nomesEscopo = null;
+  if(tipo === "relatorios" && repTab === "alocacao"){
+    _nomesEscopo = _escopoParaNomes(repScope, _repDiasIso());
+  }else if(tipo === "kpis"){
+    _nomesEscopo = _escopoParaNomes(kpiScope, new Set((kpiDays()||[]).map(toISO)), kpiTo);
+  }
+  const _usaEscopo = !!_nomesEscopo;
+  // KPIs escopados: recuam o início da janela para cobrir o período anterior (deltas ↑/↓).
+  const _cargaIni = (_usaEscopo && tipo === "kpis") ? _kpiPrevIni(inicio, fim) : inicio;
+  const cargaRealizado = _usaEscopo
+    ? _lerBucketsEscopadoPorPeriodo(_cargaIni, fim, _nomesEscopo)
+    : _lerBucketsPorPeriodo(inicio, fim);
   const cargaPrevisto = precisaPrevisto ? _lerBucketsPrevPorPeriodo(inicio, fim) : Promise.resolve(null);
 
   return Promise.all([cargaRealizado, cargaPrevisto]).then(([dadosBrutos, prevBrutos]) => {
-    const dadosFinais = filtrarDadosPorDataExata(dadosBrutos, inicio, fim);
-    _limparPeriodoCarregadoNoData(inicio, fim);
-    Object.assign(DATA, dadosFinais);
+    const dadosFinais = filtrarDadosPorDataExata(dadosBrutos, _cargaIni, fim);
+    if(_usaEscopo){
+      // Carga escopada: vai para o mapa exclusivo da tela; o DATA global da grade NÃO é tocado.
+      if(tipo === "kpis"){ KPI_DATA = dadosFinais; _kpiSrcEscopado = true; }
+      else { REP_DATA = dadosFinais; _repSrcEscopado = true; }
+    }else{
+      _limparPeriodoCarregadoNoData(inicio, fim);
+      Object.assign(DATA, dadosFinais);
+      _repSrcEscopado = false;
+      _kpiSrcEscopado = false;
+    }
 
     if(prevBrutos){
       const prevFinais = filtrarPrevPorDataExata(prevBrutos, inicio, fim);
@@ -1154,6 +1240,7 @@ function atualizarPainelAtivo(tipo){
       _repDadosCarregados = true;
       _repPeriodoCarregado = inicio + "|" + fim;
       _repTabCarregada = repTab;
+      _repEscopoCarregado = repScope;
       if(typeof renderReports === "function") renderReports(dadosFinais);
     }else{
       if(typeof renderKPIs === "function" && el("kpiOverlay") && el("kpiOverlay").classList.contains("open")) renderKPIs(dadosFinais);
@@ -1516,14 +1603,14 @@ function seedReg(){
 // campo bloqueante. Só roda em instalação sem dados.
 function seedChecklistTipos(){
   const hoje=new Date().toISOString();
-  const it=(id,nome,pts)=>({id,nome,pts,ativo:true});
+  const it=(id,nome,pts,imped=false)=>({id,nome,pts,ativo:true,impeditivo:imped});
   const tp=(id,nome,itens)=>({id,nome,ativo:true,createdAt:hoje,createdBy:"sistema",updatedAt:hoje,updatedBy:"sistema",itens:itens.map((x,i)=>Object.assign({},x,{ordem:i}))});
   return [
     tp("clt_param","Parametrização Sistêmica",[it("cli_param_cli","Cadastro de clientes",5),it("cli_param_vei","Cadastro de veículos",5),it("cli_param_mot","Cadastro de motoristas",5),it("cli_param_frete","Cadastro de tabelas frete",5)]),
-    tp("clt_integ","Integrações",[it("cli_integ_erp","Integração ERP",10),it("cli_integ_ciot","Integração CIOT",5),it("cli_integ_pef","Integração PEF",5),it("cli_integ_rast","Integração Rastreador",5)]),
+    tp("clt_integ","Integrações",[it("cli_integ_erp","Integração ERP",10,true),it("cli_integ_ciot","Integração CIOT",5),it("cli_integ_pef","Integração PEF",5),it("cli_integ_rast","Integração Rastreador",5)]),
     tp("clt_trein","Treinamentos",[it("cli_trein_op","Treinamento operacional",8),it("cli_trein_bo","Treinamento backoffice",6),it("cli_trein_gest","Treinamento gestores",6)]),
-    tp("clt_valid","Validações Operacionais",[it("cli_valid_cte","Emissão CT-e",5),it("cli_valid_mdfe","Emissão MDF-e",5),it("cli_valid_viag","Fluxo de viagem",5),it("cli_valid_baixa","Baixa operacional",5)]),
-    tp("clt_aprov","Aprovação Cliente",[it("cli_aprov_homol","Homologação cliente",10),it("cli_aprov_aceite","Aceite formal",5)]),
+    tp("clt_valid","Validações Operacionais",[it("cli_valid_cte","Emissão CT-e",5,true),it("cli_valid_mdfe","Emissão MDF-e",5,true),it("cli_valid_viag","Fluxo de viagem",5),it("cli_valid_baixa","Baixa operacional",5)]),
+    tp("clt_aprov","Aprovação Cliente",[it("cli_aprov_homol","Homologação cliente",10,true),it("cli_aprov_aceite","Aceite formal",5,true)]),
   ];
 }
 // Cadastro semente de tarefas (exemplos · nível abaixo da atividade). Cada tarefa referencia
@@ -1608,7 +1695,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.84.0";
+const APP_VERSION = "1.88.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -2242,7 +2329,7 @@ function setActiveNav(t){
 }
 /* Telas-página são mutuamente exclusivas: abrir uma fecha as outras (uma por vez). */
 function _fecharOutrasTelas(exceto){
-  ["esteiraOverlay","discoveryOverlay","repOverlay","kpiOverlay","actOverlay","atasOverlay","cronogramaOverlay","mapaOverlay"].forEach(function(id){
+  ["esteiraOverlay","discoveryOverlay","repOverlay","kpiOverlay","actOverlay","atasOverlay","cronogramaOverlay","mapaOverlay","preGoLiveOverlay"].forEach(function(id){
     if(id!==exceto){ try{ var o=el(id); if(o) o.classList.remove("open"); }catch(e){} }
   });
 }
@@ -2881,6 +2968,7 @@ function renderHome(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
     {action:"relatorios", act:"openMapa()",                 ic:"map",              t:"Mapa do Projeto",            d:"Curva-S, KPIs e linha de Go-Live",         m:"abrir"},
     {action:"kpis",       act:"el('kpisBtn').click()",      ic:"line-chart",       t:"KPIs",                       d:"Indicadores executivos",                   m:"abrir"},
     {action:"atas",       act:"openAtasReport()",           ic:"file-signature",   t:"Atas",                       d:"Controle e indicadores das atas",          m:"abrir"},
+    {action:"pregolive",  act:"openPreGoLive()",            ic:"clipboard-check",  t:"Checklist",                  d:"Checklist de itens por projeto",           m:"abrir"},
     {action:"cadastros",  act:"el('acoesBtn').click()",     ic:"settings-2",       t:"Ações & cadastros",          d:"Analistas, projetos, usuários, rituais",   m:"abrir"},
     {action:"nsforma", always:true, act:"window.open('https://capacitacaonstech.vercel.app','_blank','noopener')", ic:"graduation-cap", t:"NS Forma",         d:"Plataforma de capacitação NSTECH",         m:"abrir"},
   ].filter(c=>c.always || canViewAction(c.action));
@@ -3910,7 +3998,7 @@ function renderCadastroHome(){
     ["analistas","Analistas","users","Cadastro de analistas, squads e vínculos"],
     ["atividades","Atividades","tag","Tipos de atividade, exigência de observação e regras"],
     ["tarefas","Tarefas","list-checks","Tarefas vinculadas às atividades (nível abaixo)"],
-    ["checklistTipos","Tipos de Checklist","clipboard-check","Checklists de prontidão (Pré Go-Live) e seus itens"],
+    ["checklistTipos","Tipos de Checklist","clipboard-check","Tipos de checklist e seus itens"],
     ["lideres","Líderes","user-cog","Cadastro de líderes de implantação"],
     ["gps","Gerentes","user-check","Cadastro de gerentes de projeto"],
     ["feriados","Feriados","calendar-x","Calendário usado nas regras de dias úteis"],
@@ -3965,6 +4053,416 @@ function renderTabs(){
   }));
   lucideRefresh();
 }
+/* ===================== AÇÃO · CHECKLIST PRÉ GO-LIVE (Fase 2) =====================
+   Ação no molde da Ata: botão na sidebar, card na Visão geral, vínculo a projeto.
+   Fluxo: seleciona projeto → vincula um ou mais TIPOS de checklist (cadastro vivo,
+   cada tipo uma vez) → executa os itens → score + trava. Copiável entre projetos.
+   Execução no projeto: p.checklists[<tipoId>] = {vinculadoEm, vinculadoPor, itens:{<itemId>:{status,resp,data,obs}}}.
+   Status: "nao_iniciado" é VIRTUAL (ausência de registro). Itens marcados "impeditivo"
+   no CADASTRO travam o Go-Live se não estiverem "realizado" (Regra 01). Histórico via audit().
+   Score = Σ pts realizados ÷ Σ pts totais × 100. Só "realizado" entra no numerador. */
+const PGL_STATUS = [
+  {id:"nao_iniciado", label:"Não iniciado"},
+  {id:"realizado",    label:"Realizado"},
+  {id:"nao_realizado",label:"Não realizado"},
+];
+const PGL_FAIXAS = [
+  {min:0,  max:60,  id:"nao_apto", label:"Não apto",         cls:"pgl-fx-bad"},
+  {min:61, max:80,  id:"atencao",  label:"Atenção",          cls:"pgl-fx-warn"},
+  {min:81, max:94,  id:"quase",    label:"Quase pronto",     cls:"pgl-fx-okl"},
+  {min:95, max:100, id:"liberado", label:"Liberado Go-Live", cls:"pgl-fx-ok"},
+];
+let _pglProj="", _pglCopiarOpen=false, _pglView="painel", _pglPainelOrd=[];
+
+function _pglProjetos(){
+  try{ return (_projetosVisiveis()||[]).filter(p=>p&&p.nome).slice().sort(byNome); }
+  catch(e){ return (REG.projetos||[]).filter(p=>p&&p.nome).slice().sort(byNome); }
+}
+function _pglProjByNome(nome){ return (REG.projetos||[]).find(p=>p&&p.nome===nome)||null; }
+function _pglVinculos(p){ return (p&&p.checklists)||{}; }
+function _pglItemStatus(p,tipoId,itemId){ const v=_pglVinculos(p)[tipoId]; return (v&&v.itens&&v.itens[itemId]&&v.itens[itemId].status)||"nao_iniciado"; }
+function _pglFaixa(score){ return PGL_FAIXAS.find(f=>score>=f.min&&score<=f.max)||PGL_FAIXAS[0]; }
+function _pglPodeEditar(){ return canEditAction("pregolive"); }
+
+// Motor de score — puro: percorre os tipos vinculados × itens (definição do cadastro vivo).
+function _pglCalc(p){
+  const vincs=_pglVinculos(p);
+  let totalPts=0, totalItens=0, impedPend=0, impedPendPts=0, orfaos=0;
+  const ptsBy={realizado:0,nao_realizado:0,nao_iniciado:0}, cntBy={realizado:0,nao_realizado:0,nao_iniciado:0};
+  const porTipo=[];
+  Object.keys(vincs).forEach(tipoId=>{
+    const tipo=_cklTipoById(tipoId);
+    if(!tipo || tipo.ativo===false){ orfaos++; porTipo.push({tipoId, nome:(tipo&&tipo.nome)||"(tipo indisponível)", indisponivel:true, totalPts:0, realPts:0, pct:0, impedPend:0, total:0}); return; }
+    const itens=(tipo.itens||[]).filter(i=>i&&i.ativo!==false);
+    let tPts=0, tReal=0, tImped=0;
+    itens.forEach(it=>{
+      totalPts+=it.pts; tPts+=it.pts; totalItens++;
+      const st=_pglItemStatus(p,tipoId,it.id);
+      ptsBy[st]=(ptsBy[st]||0)+it.pts; cntBy[st]=(cntBy[st]||0)+1;
+      if(st==="realizado") tReal+=it.pts;
+      if(it.impeditivo && st!=="realizado"){ impedPend++; impedPendPts+=it.pts; tImped++; }
+    });
+    porTipo.push({tipoId, nome:tipo.nome, total:itens.length, totalPts:tPts, realPts:tReal, pct: tPts?Math.round((tReal/tPts)*100):0, impedPend:tImped});
+  });
+  const score = totalPts? Math.round((ptsBy.realizado/totalPts)*100) : 0;
+  const faixa=_pglFaixa(score), trava=impedPend>0;
+  return {totalPts, totalItens, ptsBy, cntBy, impedPend, impedPendPts, orfaos, porTipo, score, faixa, trava, liberado: !trava && score>=95, nVinc:Object.keys(vincs).length};
+}
+
+// Escrita de execução — choke-point. "nao_iniciado" sem dados ⇒ sem registro.
+function _pglSetItem(tipoId, itemId, patch){
+  if(!_pglPodeEditar()){ try{ toast&&toast("Sem permissão de edição no Checklist."); }catch(e){} return false; }
+  const p=_pglProjByNome(_pglProj); const tipo=_cklTipoById(tipoId);
+  if(!p||!tipo) return false;
+  const def=(tipo.itens||[]).find(i=>i&&i.id===itemId); if(!def) return false;
+  p.checklists=p.checklists||{};
+  if(!p.checklists[tipoId]) return false; // tipo precisa estar vinculado
+  const v=p.checklists[tipoId]; v.itens=v.itens||{};
+  const before = v.itens[itemId] ? JSON.parse(JSON.stringify(v.itens[itemId])) : null;
+  const rec=Object.assign({status:"nao_iniciado",resp:"",data:"",obs:""}, v.itens[itemId]||{}, patch||{});
+  if(rec.status==="realizado" && !rec.data) rec.data=toISO(new Date());
+  rec.resp=(rec.resp||"").slice(0,120); rec.obs=(rec.obs||"").slice(0,1000);
+  const vazio = rec.status==="nao_iniciado" && !rec.resp && !rec.data && !rec.obs;
+  if(vazio) delete v.itens[itemId]; else v.itens[itemId]=rec;
+  saveReg();
+  try{ audit("pregolive.item", _pglProj+" / "+tipo.nome+" / "+def.nome, before, vazio?null:rec); }catch(e){}
+  return true;
+}
+function _pglSetStatus(tipoId,itemId,st){ if(_pglSetItem(tipoId,itemId,{status:st})) renderPreGoLive(); }
+function _pglSetField(tipoId,itemId,field,val){ const pt={}; pt[field]=val; _pglSetItem(tipoId,itemId,pt); /* texto não muda score: sem re-render */ }
+
+function _pglVincular(tipoId){
+  if(!_pglPodeEditar()) return;
+  const p=_pglProjByNome(_pglProj), tipo=_cklTipoById(tipoId);
+  if(!p||!tipo){ return; }
+  p.checklists=p.checklists||{};
+  if(p.checklists[tipoId]){ try{ toast&&toast("Esse checklist já está vinculado."); }catch(e){} return; }
+  p.checklists[tipoId]={ vinculadoEm:new Date().toISOString(), vinculadoPor:(_currentUser&&_currentUser.email)||"sistema", itens:{} };
+  saveReg();
+  try{ audit("pregolive.vincular", _pglProj+" / "+tipo.nome, null, {tipoId}); }catch(e){}
+  renderPreGoLive();
+}
+function _pglDesvincular(tipoId){
+  if(!_pglPodeEditar()) return;
+  const p=_pglProjByNome(_pglProj); if(!p||!p.checklists||!p.checklists[tipoId]) return;
+  const tipo=_cklTipoById(tipoId), nm=(tipo&&tipo.nome)||tipoId;
+  if(!confirm(`Desvincular o checklist "${nm}" deste projeto?\n\nO preenchimento já lançado deixa de contar no score. O evento fica registrado na auditoria.`)) return;
+  const before=JSON.parse(JSON.stringify(p.checklists[tipoId]));
+  delete p.checklists[tipoId];
+  if(!Object.keys(p.checklists).length) delete p.checklists;
+  saveReg();
+  try{ audit("pregolive.desvincular", _pglProj+" / "+nm, before, null); }catch(e){}
+  renderPreGoLive();
+}
+function _pglToggleCopiar(){ _pglCopiarOpen=!_pglCopiarOpen; renderPreGoLive(); }
+function _pglCopiar(origemNome, incluirPreench){
+  if(!_pglPodeEditar()) return;
+  const dst=_pglProjByNome(_pglProj), src=_pglProjByNome(origemNome);
+  if(!dst||!src||!src.checklists){ try{ toast&&toast("Projeto de origem sem checklists."); }catch(e){} return; }
+  dst.checklists=dst.checklists||{};
+  let add=0;
+  Object.keys(src.checklists).forEach(tipoId=>{
+    if(dst.checklists[tipoId]) return; // não duplica
+    const novo={ vinculadoEm:new Date().toISOString(), vinculadoPor:(_currentUser&&_currentUser.email)||"sistema", itens:{} };
+    if(incluirPreench){ const si=(src.checklists[tipoId]&&src.checklists[tipoId].itens)||{}; novo.itens=JSON.parse(JSON.stringify(si)); }
+    dst.checklists[tipoId]=novo; add++;
+  });
+  if(!add){ try{ toast&&toast("Nada a copiar (todos os tipos já estavam vinculados)."); }catch(e){} return; }
+  saveReg();
+  try{ audit("pregolive.copiar", _pglProj+" ← "+origemNome, null, {tipos:add, preenchimento:!!incluirPreench}); }catch(e){}
+  _pglCopiarOpen=false;
+  renderPreGoLive();
+}
+
+// ---- Exportação PDF (retrato A4, via window.print do navegador) ----
+const NSTECH_LOGO_DATAURI="data:image/png;base64,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";
+const PGL_ST_LB={nao_iniciado:"Não iniciado", realizado:"Realizado", nao_realizado:"Não realizado"};
+function _pglPrintHTML(p){
+  const m=_pglCalc(p);
+  const cli=p.cliente||p.nome||"—";
+  const resp=(Array.isArray(p.analistas)&&p.analistas.length)?p.analistas.join(", "):"—";
+  const gl=p.goLiveRealizado||p.goLiveAjustado||p.goLivePrevisto||"";
+  const glLbl=p.goLiveRealizado?"realizado":(p.goLiveAjustado?"ajustado":(p.goLivePrevisto?"previsto":""));
+  const dr=p.goLiveRealizado?null:_pglDiasRestantes(gl);
+  const drTxt=(dr==null)?"—":(dr<0?`${Math.abs(dr)} dia(s) em atraso`:(dr===0?"hoje":`${dr} dia(s)`));
+  const T=m.totalItens, R=m.cntBy.realizado||0, NR=m.cntBy.nao_realizado||0, NI=m.cntBy.nao_iniciado||0;
+  const pAder=T?Math.round(R/T*100):0, pSem=T?Math.round(NR/T*100):0;
+  const statusLbl=m.trava?"Não liberar Go-Live":(m.faixa.label);
+  const now=new Date();
+  const dd=String(now.getDate()).padStart(2,"0"), mm=String(now.getMonth()+1).padStart(2,"0");
+  const ger=`${dd}/${mm}/${now.getFullYear()} ${String(now.getHours()).padStart(2,"0")}:${String(now.getMinutes()).padStart(2,"0")}`;
+  const dado=(l,v)=>`<div class="pp-d"><div class="pp-d-l">${l}</div><div class="pp-d-v">${v}</div></div>`;
+  const projGrid=`<div class="pp-grid">
+    ${dado("Cliente",enc(cli))}${dado("Projeto",enc(p.nome||"—"))}
+    ${dado("Líder",enc(p.lider||"—"))}${dado("Analista(s)",enc(resp))}
+    ${dado("GP",enc(p.gp||"—"))}${dado("Go-Live"+(glLbl?" ("+glLbl+")":""),gl?fmtDM(parseISO(gl)):"—")}
+    ${dado("Dias restantes",drTxt)}${dado("Status",statusLbl)}
+  </div>`;
+  const chip=(l,v,cls)=>`<div class="pp-chip ${cls||""}"><div class="pp-chip-v">${v}</div><div class="pp-chip-l">${l}</div></div>`;
+  const resumo=`<div class="pp-chips">
+    ${chip("Score (pts realizados)",m.score+"%",m.trava?"bad":(m.score>=95?"ok":(m.score>=61?"warn":"bad")))}
+    ${chip("Com aderência (realizado)",R+"/"+T+" · "+pAder+"%","ok")}
+    ${chip("Sem aderência (não realizado)",NR+"/"+T+" · "+pSem+"%",NR?"warn":"")}
+    ${chip("Impeditivos pendentes",m.impedPend+(m.impedPend?" · "+m.impedPendPts+" pts":""),m.impedPend?"bad":"ok")}
+    ${chip("Não iniciados",String(NI),"")}
+  </div>`;
+  const tipos=Object.keys(_pglVinculos(p))
+    .sort((a,b)=>{ const ia=_cklTipos().findIndex(t=>t.id===a), ib=_cklTipos().findIndex(t=>t.id===b); return (ia<0?9999:ia)-(ib<0?9999:ib); })
+    .map(tid=>{
+      const tipo=_cklTipoById(tid);
+      if(!tipo||tipo.ativo===false) return `<div class="pp-tipo"><div class="pp-tipo-h">${enc((tipo&&tipo.nome)||"(tipo indisponível)")} — indisponível no cadastro</div></div>`;
+      const mt=m.porTipo.find(x=>x.tipoId===tid)||{pct:0};
+      const itens=(tipo.itens||[]).filter(i=>i&&i.ativo!==false);
+      const rows=itens.map(it=>{
+        const rec=((_pglVinculos(p)[tid]||{}).itens||{})[it.id]||{};
+        const st=rec.status||"nao_iniciado";
+        const mark=st==="realizado"?"✓":(st==="nao_realizado"?"✕":"·");
+        return `<tr class="pp-st-${st}">
+          <td class="pp-c-mk">${mark}</td>
+          <td>${enc(it.nome)}</td>
+          <td class="pp-c-imp">${it.impeditivo?"Sim":""}</td>
+          <td class="pp-c-st">${PGL_ST_LB[st]||st}</td>
+          <td>${enc(rec.resp||"")}</td>
+          <td class="pp-c-dt">${rec.data?fmtDM(parseISO(rec.data)):""}</td>
+          <td class="pp-c-ob">${enc(rec.obs||"")}</td>
+        </tr>`;
+      }).join("");
+      return `<div class="pp-tipo">
+        <div class="pp-tipo-h">${enc(tipo.nome)} <span class="pp-tipo-pct">${mt.pct}% realizado</span></div>
+        <table class="pp-tab"><thead><tr><th></th><th>Item</th><th>Imped.</th><th>Status</th><th>Responsável</th><th>Data</th><th>Observação</th></tr></thead><tbody>${rows||`<tr><td colspan="7" class="pp-empty">Sem itens ativos.</td></tr>`}</tbody></table>
+      </div>`;
+    }).join("");
+  const semVinc=!m.nVinc?`<div class="pp-tipo"><div class="pp-empty">Nenhum checklist vinculado a este projeto.</div></div>`:"";
+  return `<div class="pglprint">
+    <div class="pp-head">
+      <div class="pp-h-l"><img class="pp-logo-img" src="${NSTECH_LOGO_DATAURI}" alt="nstech"><div class="pp-h-t">Checklist</div><div class="pp-h-s">NS ALOC · checklist do projeto</div></div>
+      <div class="pp-h-r"><div class="pp-h-score">${m.score}%</div><div class="pp-h-status">${statusLbl}</div></div>
+    </div>
+    ${projGrid}
+    ${resumo}
+    ${tipos}${semVinc}
+    <div class="pp-foot">Gerado em ${ger} · NS ALOC v${enc(versaoAtual())}</div>
+  </div>`;
+}
+function _pglGerarPDF(){
+  const p=_pglProjByNome(_pglProj); if(!p) return;
+  const host=el("pglPrint"); if(!host){ window.print(); return; }
+  host.innerHTML=_pglPrintHTML(p);
+  document.body.classList.add("pglPrinting");
+  const cleanup=()=>{ document.body.classList.remove("pglPrinting"); host.innerHTML=""; window.removeEventListener("afterprint",cleanup); };
+  window.addEventListener("afterprint",cleanup);
+  setTimeout(()=>{ try{ window.print(); }catch(e){ console.warn("[pgl] print:",e); cleanup(); } }, 60);
+}
+
+function openPreGoLive(){
+  if(!canViewAction("pregolive")){ alert("Você não tem acesso ao Checklist."); return; }
+  _fecharOutrasTelas("preGoLiveOverlay");
+  const o=el("preGoLiveOverlay"); if(o)o.classList.add("open");
+  renderPreGoLive();
+}
+function closePreGoLive(){ const o=el("preGoLiveOverlay"); if(o)o.classList.remove("open"); }
+function _pglSelProj(nome){ _pglProj=nome; _pglCopiarOpen=false; renderPreGoLive(); }
+
+function _pglDiasRestantes(iso){ if(!iso) return null; const h=parseISO(toISO(new Date())), a=parseISO(iso); return Math.round((a-h)/86400000); }
+function _pglInfoHTML(p){
+  const cli=p.cliente||p.nome||"—";
+  const resp=(Array.isArray(p.analistas)&&p.analistas.length)?p.analistas.join(", "):"—";
+  const gl=p.goLiveRealizado||p.goLiveAjustado||p.goLivePrevisto||"";
+  const glLbl=p.goLiveRealizado?"realizado":(p.goLiveAjustado?"ajustado":(p.goLivePrevisto?"previsto":""));
+  const dr=p.goLiveRealizado?null:_pglDiasRestantes(gl);
+  const drTxt=(dr==null)?"—":(dr<0?`<span class="pgl-bad">${Math.abs(dr)} d. atrás</span>`:(dr===0?`<span class="pgl-bad">hoje</span>`:`${dr} dias`));
+  const itens=[["Cliente",enc(cli)],["Projeto",enc(p.nome||"—")],["Analista responsável",enc(resp)],["GP responsável",enc(p.gp||"—")],["Go-Live"+(glLbl?" ("+glLbl+")":""),gl?fmtDM(parseISO(gl)):"—"],["Dias restantes",drTxt]];
+  return `<div class="pgl-info">${itens.map(i=>`<div class="pgl-if"><div class="pgl-if-l">${i[0]}</div><div class="pgl-if-v">${i[1]}</div></div>`).join("")}</div>`;
+}
+function _pglScoreHTML(m){
+  const blocked=m.trava;
+  const faixaLbl=blocked?"Não liberar Go-Live":m.faixa.label;
+  const faixaCls=blocked?"pgl-fx-bad":m.faixa.cls;
+  const aviso=blocked
+    ? `<div class="pgl-block"><i data-lucide="shield-alert"></i> ${m.impedPend} item(ns) impeditivo(s) pendente(s) (${m.impedPendPts} pts) — projeto não pode ser liberado mesmo com score alto.</div>`
+    : (m.liberado?`<div class="pgl-clear"><i data-lucide="rocket"></i> Critérios atendidos: projeto apto a Go-Live.</div>`:"");
+  if(!m.nVinc) return `<div class="pgl-novinc"><i data-lucide="link"></i> Nenhum checklist vinculado a este projeto ainda. Use <b>Vincular checklist</b> abaixo.</div>`;
+  return `<div class="pgl-score-wrap">
+    <div class="pgl-score-box ${faixaCls}"><div class="pgl-score-n">${m.score}<span>%</span></div><div class="pgl-score-fx">${faixaLbl}</div></div>
+    <div class="pgl-score-side">
+      <div class="pgl-prog"><div class="pgl-prog-fill ${faixaCls}" style="width:${m.score}%"></div></div>
+      <div class="pgl-score-meta">
+        <span><b>${m.cntBy.realizado||0}</b> realizados · ${m.ptsBy.realizado||0} pts</span>
+        <span><b>${m.cntBy.nao_realizado||0}</b> não realizados</span>
+        <span><b>${m.cntBy.nao_iniciado||0}</b> não iniciados</span>
+        <span class="${m.impedPend?'pgl-bad':''}"><b>${m.impedPend}</b> impeditivo(s) pendente(s)</span>
+      </div>
+      ${aviso}
+    </div></div>`;
+}
+function _pglItemRowHTML(p, tipoId, it, ro){
+  const rec=((_pglVinculos(p)[tipoId]||{}).itens||{})[it.id]||{};
+  const st=rec.status||"nao_iniciado", dis=ro?"disabled":"";
+  const opts=PGL_STATUS.map(s=>`<option value="${s.id}" ${s.id===st?"selected":""}>${s.label}</option>`).join("");
+  const imp=it.impeditivo?`<span class="pgl-impbadge" title="Impeditivo: trava o Go-Live se não realizado"><i data-lucide="shield-alert"></i>impeditivo</span>`:"";
+  const alerta=(it.impeditivo && st!=="realizado")?" pgl-it-imped":"";
+  return `<div class="pgl-it pgl-st-${st}${alerta}">
+    <div class="pgl-it-main">
+      <div class="pgl-it-nm">${enc(it.nome)} ${imp}<span class="pgl-pts">${it.pts} pts</span></div>
+      <div class="pgl-it-ctrls">
+        <select class="pgl-st-sel" ${dis} onchange="_pglSetStatus('${tipoId}','${it.id}',this.value)">${opts}</select>
+        <input class="pgl-resp" type="text" maxlength="120" placeholder="Responsável" value="${enc(rec.resp||"")}" ${dis} onchange="_pglSetField('${tipoId}','${it.id}','resp',this.value)">
+        <input class="pgl-data" type="date" title="Data" value="${enc(rec.data||"")}" ${dis} onchange="_pglSetField('${tipoId}','${it.id}','data',this.value)">
+      </div>
+      <textarea class="pgl-obs" rows="1" maxlength="1000" placeholder="Observação…" ${dis} onchange="_pglSetField('${tipoId}','${it.id}','obs',this.value)">${enc(rec.obs||"")}</textarea>
+    </div>
+  </div>`;
+}
+function _pglTipoHTML(p, tipoId, mt, ro){
+  const tipo=_cklTipoById(tipoId);
+  if(!tipo || tipo.ativo===false){
+    return `<div class="pgl-tipo pgl-tipo-orf"><div class="pgl-tipo-h"><div class="pgl-tipo-t">${enc((tipo&&tipo.nome)||"(tipo indisponível)")} <span class="pgl-orf">indisponível no cadastro</span></div>${ro?"":`<button class="pgl-mini danger" title="Desvincular" onclick="_pglDesvincular('${tipoId}')"><i data-lucide="unlink"></i></button>`}</div></div>`;
+  }
+  const itens=(tipo.itens||[]).filter(i=>i&&i.ativo!==false);
+  const rows=itens.map(it=>_pglItemRowHTML(p,tipoId,it,ro)).join("")||`<div class="pgl-empty-it">Este checklist não tem itens ativos.</div>`;
+  const impTxt=mt.impedPend?`<span class="pgl-bad" title="Impeditivos pendentes">${mt.impedPend} impeditivo(s)</span> · `:"";
+  const desv=ro?"":`<button class="pgl-mini danger" title="Desvincular checklist" onclick="_pglDesvincular('${tipoId}')"><i data-lucide="unlink"></i></button>`;
+  return `<div class="pgl-tipo">
+    <div class="pgl-tipo-h">
+      <div class="pgl-tipo-t">${enc(tipo.nome)}</div>
+      <div class="pgl-tipo-r">${impTxt}<span class="pgl-tipo-pct">${mt.pct}%</span><div class="pgl-tipo-bar"><i style="width:${mt.pct}%"></i></div>${desv}</div>
+    </div>
+    <div class="pgl-its">${rows}</div>
+  </div>`;
+}
+function _pglToolbarHTML(p, ro){
+  if(ro) return `<div class="pgl-ro"><i data-lucide="eye"></i> Somente leitura — você não tem permissão para editar este checklist.</div>`;
+  const vinc=_pglVinculos(p);
+  const disponiveis=_cklTipos().filter(t=>t&&t.ativo!==false&&!vinc[t.id]).slice();
+  const selTipos=disponiveis.length
+    ? `<select id="pglVincSel">${disponiveis.map(t=>`<option value="${t.id}">${enc(t.nome)}</option>`).join("")}</select>
+       <button class="btn sm primary" onclick="(function(){var s=el('pglVincSel');if(s&&s.value)_pglVincular(s.value);})()"><i data-lucide="plus"></i>Vincular checklist</button>`
+    : `<span class="pgl-allvinc">Todos os tipos ativos já estão vinculados.</span>`;
+  const outros=_pglProjetos().filter(x=>x.nome!==_pglProj && x.checklists && Object.keys(x.checklists).length);
+  let copiar="";
+  if(outros.length){
+    copiar=`<button class="btn sm" onclick="_pglToggleCopiar()"><i data-lucide="copy"></i>Copiar de outro projeto</button>`;
+    if(_pglCopiarOpen){
+      copiar+=`<div class="pgl-copybox">
+        <span class="mf-lb">Origem</span>
+        <select id="pglCopySel">${outros.map(x=>`<option value="${enc(x.nome)}">${enc(x.nome)}</option>`).join("")}</select>
+        <label class="pgl-copychk"><input type="checkbox" id="pglCopyFill"><span>copiar também o preenchimento</span></label>
+        <button class="btn sm primary" onclick="(function(){var s=el('pglCopySel'),f=el('pglCopyFill');if(s&&s.value)_pglCopiar(s.value, !!(f&&f.checked));})()"><i data-lucide="check"></i>Copiar</button>
+        <button class="btn sm" onclick="_pglToggleCopiar()">Cancelar</button>
+      </div>`;
+    }
+  }
+  return `<div class="pgl-toolbar"><div class="pgl-tb-vinc">${selTipos}</div><div class="pgl-tb-copy">${copiar}</div></div>`;
+}
+function _pglSetView(v){ _pglView=v; _pglCopiarOpen=false; renderPreGoLive(); }
+function _pglAbrirProjeto(nome){ _pglProj=nome; _pglView="projeto"; _pglCopiarOpen=false; renderPreGoLive(); }
+function _pglAbrirProjetoIdx(i){ const n=_pglPainelOrd[i]; if(n) _pglAbrirProjeto(n); }
+function renderPreGoLive(){
+  const host=el("preGoLiveBody"); if(!host) return;
+  const projs=_pglProjetos();
+  if(!_pglProj && projs[0]) _pglProj=projs[0].nome;
+  if(_pglProj && !projs.some(p=>p.nome===_pglProj) && projs[0]) _pglProj=projs[0].nome;
+  const tabs=`<div class="pgl-tabs">
+    <button class="pgl-tab ${_pglView==="painel"?"on":""}" onclick="_pglSetView('painel')"><i data-lucide="layout-dashboard"></i>Painel</button>
+    <button class="pgl-tab ${_pglView==="projeto"?"on":""}" onclick="_pglSetView('projeto')"><i data-lucide="clipboard-check"></i>Checklist do projeto</button>
+  </div>`;
+  let corpo;
+  if(_pglView==="painel"){
+    corpo=_pglPainelHTML();
+  } else {
+    const filtro=`<div class="mapa-filtro"><span class="mf-lb">Projeto</span>
+      <select id="pglProjSel" onchange="_pglSelProj(this.value)">${projs.length?projs.map(p=>`<option ${p.nome===_pglProj?"selected":""}>${enc(p.nome)}</option>`).join(""):`<option value="">(sem projetos)</option>`}</select></div>`;
+    const p=_pglProjByNome(_pglProj);
+    let body;
+    if(!p){ body=`<div class="rep-empty">Nenhum projeto disponível no seu escopo.</div>`; }
+    else{
+      const ro=!_pglPodeEditar();
+      const m=_pglCalc(p);
+      const tipos=Object.keys(_pglVinculos(p))
+        .sort((a,b)=>{ const ia=_cklTipos().findIndex(t=>t.id===a), ib=_cklTipos().findIndex(t=>t.id===b); return (ia<0?9999:ia)-(ib<0?9999:ib); })
+        .map(tid=>{ const mt=m.porTipo.find(x=>x.tipoId===tid)||{pct:0,impedPend:0}; return _pglTipoHTML(p,tid,mt,ro); }).join("");
+      body=`${_pglInfoHTML(p)}${_pglScoreHTML(m)}${_pglToolbarHTML(p,ro)}<div class="pgl-tipos">${tipos}</div>`;
+    }
+    const pdfBtn=(p && Object.keys(_pglVinculos(p)).length)?`<button class="btn sm pgl-pdfbtn" onclick="_pglGerarPDF()"><i data-lucide="file-down"></i>Gerar PDF (A4)</button>`:"";
+    corpo=`<div class="pgl-projbar">${filtro}${pdfBtn}</div>`+body;
+  }
+  host.innerHTML=tabs+`<div id="pglPainel">${corpo}</div>`;
+  lucideRefresh();
+}
+
+// ---- Painel executivo (dashboard cross-projetos) ----
+// "Em Pré Go-Live" = projeto visível com pelo menos um checklist vinculado.
+function _pglDashboard(){
+  const projs=_pglProjetos().filter(p=>p.checklists && Object.keys(p.checklists).length);
+  const linhas=projs.map(p=>{
+    const m=_pglCalc(p);
+    const gl=p.goLiveRealizado||p.goLiveAjustado||p.goLivePrevisto||"";
+    const dias=p.goLiveRealizado?null:_pglDiasRestantes(gl);
+    return {nome:p.nome, m, dias, golive:gl, realizado:!!p.goLiveRealizado};
+  });
+  const aptos=linhas.filter(l=>l.m.liberado).length;
+  const emRisco=linhas.filter(l=>l.m.trava || l.m.score<61).length;
+  const pendCriticas=linhas.reduce((s,l)=>s+l.m.impedPend,0);
+  const comPrazo=linhas.filter(l=>l.dias!=null);
+  const tempoMedio=comPrazo.length?Math.round(comPrazo.reduce((s,l)=>s+l.dias,0)/comPrazo.length):null;
+  // agregação por tipo (Σ realPts / Σ totalPts entre projetos)
+  const agg={};
+  linhas.forEach(l=>l.m.porTipo.forEach(t=>{ if(t.indisponivel) return; const a=agg[t.tipoId]||(agg[t.tipoId]={nome:t.nome,totalPts:0,realPts:0}); a.totalPts+=t.totalPts; a.realPts+=t.realPts; }));
+  const porTipo=_cklTipos().filter(t=>agg[t.id]).map(t=>({nome:t.nome, pct: agg[t.id].totalPts?Math.round((agg[t.id].realPts/agg[t.id].totalPts)*100):0}));
+  return {total:linhas.length, aptos, emRisco, pendCriticas, tempoMedio, porTipo, linhas};
+}
+function _pglBarChart(porTipo){
+  if(!porTipo.length) return "";
+  const W=680, rowH=34, padL=200, padR=46, top=8, w=W-padL-padR;
+  const H=top*2+porTipo.length*rowH;
+  const cor=pct=> pct>=95?"var(--ok)":pct>=81?"#4fa372":pct>=61?"var(--warn)":"var(--danger)";
+  const rows=porTipo.map((t,i)=>{
+    const y=top+i*rowH+6, bw=Math.max(2,Math.round(w*t.pct/100));
+    return `<text x="${padL-10}" y="${y+11}" text-anchor="end" class="pgl-bc-lb">${enc(t.nome.length>26?t.nome.slice(0,25)+"…":t.nome)}</text>
+      <rect x="${padL}" y="${y}" width="${w}" height="16" rx="8" fill="#eceef3"/>
+      <rect x="${padL}" y="${y}" width="${bw}" height="16" rx="8" fill="${cor(t.pct)}"/>
+      <text x="${padL+w+8}" y="${y+12}" class="pgl-bc-val">${t.pct}%</text>`;
+  }).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="Percentual realizado por tipo de checklist">${rows}</svg>`;
+}
+function _pglPainelHTML(){
+  const d=_pglDashboard();
+  if(!d.total){
+    return `<div class="pgl-novinc"><i data-lucide="info"></i> Nenhum projeto com checklist ainda. Vincule um checklist a um projeto na aba <b>Checklist do projeto</b>.</div>`;
+  }
+  const kpis=[
+    {ic:"clipboard-check", t:"Projetos com checklist",  v:d.total,        cls:""},
+    {ic:"badge-check", t:"Projetos aptos",          v:d.aptos,        cls:"ok"},
+    {ic:"alert-triangle",t:"Projetos em risco",     v:d.emRisco,      cls:d.emRisco?"bad":""},
+    {ic:"shield-alert",t:"Pendências críticas",     v:d.pendCriticas, cls:d.pendCriticas?"bad":""},
+    {ic:"timer",       t:"Tempo médio p/ Go-Live",  v:d.tempoMedio==null?"—":(d.tempoMedio+" d"), cls:""},
+  ];
+  const cards=kpis.map(k=>`<div class="pgl-kpi ${k.cls}"><div class="pgl-kpi-ic"><i data-lucide="${k.ic}"></i></div><div class="pgl-kpi-v">${k.v}</div><div class="pgl-kpi-t">${k.t}</div></div>`).join("");
+  const chart=d.porTipo.length?`<div class="pgl-card"><div class="pgl-card-t">% realizado por tipo de checklist</div>${_pglBarChart(d.porTipo)}</div>`:"";
+  // lista rankeada: risco primeiro, depois menor score
+  const ord=d.linhas.slice().sort((a,b)=>{
+    const ra=(a.m.trava?0:1), rb=(b.m.trava?0:1); if(ra!==rb) return ra-rb;
+    return a.m.score-b.m.score;
+  });
+  const rows=ord.map(l=>{
+    const blocked=l.m.trava;
+    const fxCls=blocked?"pgl-fx-bad":l.m.faixa.cls;
+    const fxLb=blocked?"Não liberar":l.m.faixa.label;
+    const dias=l.realizado?`<span class="pgl-li-go">Go-Live realizado</span>`:(l.dias==null?"—":(l.dias<0?`<span class="pgl-bad">${Math.abs(l.dias)}d atrás</span>`:`${l.dias}d`));
+    const imp=l.m.impedPend?`<span class="pgl-li-imp">${l.m.impedPend} impeditivo(s)</span>`:"";
+    return `<div class="pgl-li" onclick="_pglAbrirProjetoIdx(${ord.indexOf(l)})">
+      <div class="pgl-li-nm">${enc(l.nome)} ${imp}</div>
+      <div class="pgl-li-mid"><div class="pgl-li-bar"><i class="${fxCls}" style="width:${l.m.score}%"></i></div></div>
+      <div class="pgl-li-sc"><span class="pgl-li-badge ${fxCls}">${fxLb}</span><b>${l.m.score}%</b></div>
+      <div class="pgl-li-dias">${dias}</div>
+      <i data-lucide="chevron-right" class="pgl-li-go-ic"></i>
+    </div>`;
+  }).join("");
+  const lista=`<div class="pgl-card"><div class="pgl-card-t">Projetos com checklist <span class="pgl-card-s">(toque para abrir o checklist)</span></div><div class="pgl-lista">${rows}</div></div>`;
+  _pglPainelOrd=ord.map(l=>l.nome);
+  return `<div class="pgl-kpis">${cards}</div>${chart}${lista}`;
+}
+
 /* ===================== CADASTRO · TIPOS DE CHECKLIST (Pré Go-Live · Fase 1A) =====================
    Cadastro autocontido (mesmo molde do tratamento especial de "usuarios" em renderActions):
    não usa o renderList/renderForm genérico — desenha a própria UI em #actBody.
@@ -4003,6 +4501,7 @@ function _cklDraftItem(itemId){ return ((_cklDraft&&_cklDraft.itens)||[]).find(i
 function _cklDraftItemSetNome(itemId,v){ const i=_cklDraftItem(itemId); if(i) i.nome=(v||"").slice(0,160); }
 function _cklDraftItemSetPts(itemId,v){ const i=_cklDraftItem(itemId); if(i){ let n=parseInt(v,10); if(!isFinite(n)||n<0)n=0; if(n>1000)n=1000; i.pts=n; renderChecklistCadastro(); } }
 function _cklDraftItemToggle(itemId,v){ const i=_cklDraftItem(itemId); if(i){ i.ativo=!!v; renderChecklistCadastro(); } }
+function _cklDraftItemToggleImped(itemId,v){ const i=_cklDraftItem(itemId); if(i){ i.impeditivo=!!v; renderChecklistCadastro(); } }
 function _cklDraftItemRemove(itemId){
   if(!_cklDraft) return;
   _cklDraft.itens=(_cklDraft.itens||[]).filter(i=>i&&i.id!==itemId);
@@ -4023,7 +4522,7 @@ function _cklSalvar(){
   const dup=_cklTipos().some(t=>t&&t.id!==_cklDraft.id && (t.nome||"").trim().toLowerCase()===nome.toLowerCase());
   if(dup){ alert("Já existe um tipo de checklist com esse nome."); return; }
   const itens=(_cklDraft.itens||[]).filter(i=>((i.nome||"").trim()))
-                                   .map((i,idx)=>({ id:i.id||_cklNewId("cli"), nome:(i.nome||"").trim(), pts:Math.max(0,+i.pts||0), ordem:idx, ativo:i.ativo!==false }));
+                                   .map((i,idx)=>({ id:i.id||_cklNewId("cli"), nome:(i.nome||"").trim(), pts:Math.max(0,+i.pts||0), ordem:idx, ativo:i.ativo!==false, impeditivo:!!i.impeditivo }));
   const hoje=new Date().toISOString(), user=(_currentUser&&_currentUser.email)||"sistema";
   const tipos=_cklTipos();
   const idx=tipos.findIndex(t=>t&&t.id===_cklDraft.id);
@@ -4056,12 +4555,13 @@ function _cklListaHTML(){
   }
   const rows=tipos.map(t=>{
     const nAtivos=((t.itens||[]).filter(i=>i&&i.ativo!==false)).length, nTot=(t.itens||[]).length;
+    const nImp=((t.itens||[]).filter(i=>i&&i.ativo!==false&&i.impeditivo)).length;
     const st=t.ativo!==false?`<span class="ckl-badge ok">Ativo</span>`:`<span class="ckl-badge off">Inativo</span>`;
     const acoes=ro?"":`<button class="ckl-mini" title="Editar" onclick="_cklEditarTipo('${t.id}')"><i data-lucide="pencil"></i></button>
         <button class="ckl-mini danger" title="Remover" onclick="_cklRemoverTipo('${t.id}')"><i data-lucide="trash-2"></i></button>`;
     return `<div class="ckl-row">
       <div class="ckl-row-main"><div class="ckl-row-nm">${enc(t.nome)} ${st}</div>
-        <div class="ckl-row-sub">${nAtivos} item(ns) ativo(s)${nTot!==nAtivos?` · ${nTot} no total`:""} · ${_cklTotalPts(t)} pts</div></div>
+        <div class="ckl-row-sub">${nAtivos} item(ns) ativo(s)${nTot!==nAtivos?` · ${nTot} no total`:""} · ${_cklTotalPts(t)} pts${nImp?` · <span class="ckl-imp-tag">${nImp} impeditivo(s)</span>`:""}</div></div>
       <div class="ckl-row-act">${acoes}</div>
     </div>`;
   }).join("");
@@ -4078,6 +4578,7 @@ function _cklFormHTML(){
       </div>
       <input class="ckl-it-nm" type="text" maxlength="160" placeholder="Nome do item" value="${enc(i.nome||"")}" ${dis} onchange="_cklDraftItemSetNome('${i.id}',this.value)">
       <input class="ckl-it-pts" type="number" min="0" max="1000" step="1" title="Pontos" value="${enc(String(i.pts!=null?i.pts:0))}" ${dis} onchange="_cklDraftItemSetPts('${i.id}',this.value)">
+      <label class="ckl-it-imp ${i.impeditivo?"on":""}" title="Impeditivo de Go-Live: se não estiver realizado, trava a liberação"><input type="checkbox" ${i.impeditivo?"checked":""} ${dis} onchange="_cklDraftItemToggleImped('${i.id}',this.checked)"><span><i data-lucide="shield-alert"></i>impeditivo</span></label>
       <label class="ckl-it-at" title="Item ativo"><input type="checkbox" ${i.ativo!==false?"checked":""} ${dis} onchange="_cklDraftItemToggle('${i.id}',this.checked)"><span>ativo</span></label>
       ${ro?"":`<button class="ckl-mini danger" title="Remover item" onclick="_cklDraftItemRemove('${i.id}')"><i data-lucide="x"></i></button>`}
     </div>`).join("");
@@ -6474,6 +6975,7 @@ function applyActionMenuVisibility(){
     {sel:'#reportsBtn',                    action:"relatorios"},
     {sel:'#mapaBtn',                       action:"relatorios"},
     {sel:'#kpisBtn',                       action:"kpis"},
+    {sel:'#preGoLiveBtn',                  action:"pregolive"},
     {sel:'#acoesBtn',                      action:"cadastros"},
   ];
   map.forEach(m=>{
@@ -6607,12 +7109,19 @@ let _repDadosCarregados=false;       // Relatórios: abrir modal NÃO baixa dado
 let _repPeriodoCarregado="";         // controle do período efetivamente baixado
 let _repTabCarregada="";             // última aba consultada sob demanda
 let _repPrevistoCarregado=false;      // aba Aderência precisa também dos buckets PREV
+let _repEscopoCarregado="";          // Fase 1: escopo efetivamente baixado (D2: trocar escopo => re-fetch)
+
+// Fase 1 — mapa de leitura EXCLUSIVO dos relatórios (recorte escopado), isolado do DATA global da grade.
+// Quando a carga é escopada (lider/squad/gp/analista), os dados vão para cá e o DATA global NÃO é tocado.
+let REP_DATA={};
+let _repSrcEscopado=false;           // true => renderizadores de relatório leem REP_DATA; false => DATA global
 
 function _marcarRelatorioPendente(){
   _repDadosCarregados=false;
   _repPeriodoCarregado="";
   _repTabCarregada="";
   _repPrevistoCarregado=false;
+  _repEscopoCarregado="";
 }
 function _htmlRelatorioSobDemanda(){
   return `<div class="rep-empty">
@@ -6914,7 +7423,8 @@ function _aplicaEscopo(ns, escopo, diasIso){
 }
 function repAnalysts(){return _aplicaEscopo(visibleAnalysts(repTo||undefined), repScope, _repDiasIso());}
 // Conta slots de um analista no período por categoria
-function contarSlots(nome,dias,fer){
+function contarSlots(nome,dias,fer,src){
+  const D = src || DATA; // Fase 1: fonte parametrizável (relatórios escopados leem REP_DATA; default = DATA global)
   const work=SLOTS.filter(s=>!s.lunch);
   const total=dias.length*work.length;
   // 5 buckets de tipo + livre + vazio. "dsc"=Discovery; "svc"=Service.
@@ -6924,7 +7434,7 @@ function contarSlots(nome,dias,fer){
   const projsTipo={}; // {cliente: {implantacao,discovery,service}} — esforço por projeto separado por tipo de atividade
   const _bumpT=(cli,t)=>{ if(!cli||cli==="Livre")return; (projsTipo[cli]=projsTipo[cli]||{})[t]=(projsTipo[cli][t]||0)+1; };
   dias.forEach(d=>{const iso=toISO(d);const isFer=!!fer[iso];
-    work.forEach(s=>{const r=DATA[key(nome,iso,s.id)];
+    work.forEach(s=>{const r=D[key(nome,iso,s.id)];
       // Sem nada lançado (ou só placeholder Livre): conta como livre ou vazio dependendo do feriado
       if(ehSlotLivre(r)){
         if(!r){ if(isFer)aus++; else vazio++; }
@@ -7003,13 +7513,13 @@ function renderReports(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualq
   });
   el("repFrom").addEventListener("change",e=>{repFrom=e.target.value;repPeriodMode="custom";const pIni=el("repPeriodoDataInicio"); if(pIni) pIni.value=repFrom; _marcarRelatorioPendente(); renderReports();});
   el("repTo").addEventListener("change",e=>{repTo=e.target.value;repPeriodMode="custom";const pFim=el("repPeriodoDataFim"); if(pFim) pFim.value=repTo; _marcarRelatorioPendente(); renderReports();});
-  el("repScope").addEventListener("change",e=>{repScope=e.target.value;renderReports();});
+  el("repScope").addEventListener("change",e=>{repScope=e.target.value; _marcarRelatorioPendente(); renderReports();});
   el("repExport").addEventListener("click",exportRepCSV);
   el("repPrint").addEventListener("click",imprimirRelatorio);
 
   const periodoAtual = (repFrom || "") + "|" + (repTo || "");
   const precisaPrevisto = repTab === "aderencia";
-  if(!_repDadosCarregados || _repPeriodoCarregado !== periodoAtual || _repTabCarregada !== repTab || (precisaPrevisto && !_repPrevistoCarregado)){
+  if(!_repDadosCarregados || _repPeriodoCarregado !== periodoAtual || _repTabCarregada !== repTab || _repEscopoCarregado !== repScope || (precisaPrevisto && !_repPrevistoCarregado)){
     el("repBody").innerHTML = _htmlRelatorioSobDemanda();
     _lastRepRows=[];
     return;
@@ -7073,7 +7583,8 @@ function renderRepAlocacao(){
   const ns=repAnalysts();
   if(!dias.length){el("repBody").innerHTML='<div class="rep-empty">Selecione um período válido.</div>';_lastRepRows=[];return;}
   if(!ns.length){el("repBody").innerHTML='<div class="rep-empty">Nenhum analista no escopo selecionado.</div>';_lastRepRows=[];return;}
-  const rows=ns.map(n=>{const c=contarSlots(n,dias,fer);return {
+  const SRC = _repSrcEscopado ? REP_DATA : DATA; // Fase 1: lê o recorte escopado quando a carga foi filtrada por escopo
+  const rows=ns.map(n=>{const c=contarSlots(n,dias,fer,SRC);return {
     analista:n, lider:liderDe(n)||"—", squad:squadDe(n)||"—",
     total:c.total, projeto:c.proj, discovery:c.dsc, service:c.svc, rotina:c.rot, interna:c.intn,
     ausencia:c.aus, livre:c.livre, vazio:c.vazio,
@@ -8225,6 +8736,9 @@ function daysBetween(iso1,iso2){
 }
 let kpiScope="todos", kpiPeriodMode="semana", kpiFrom=null, kpiTo=null;
 let kpiTab="visao"; // visao | capacidade | atividades | projetos | qualidade
+// Fase 2 — mapa de leitura EXCLUSIVO dos KPIs (recorte escopado), isolado do DATA global da grade.
+let KPI_DATA={};
+let _kpiSrcEscopado=false;           // true => KPIs leem KPI_DATA; false => DATA global
 const KPI_TABS=[
   ["visao",      "Visão Geral",        "layout-dashboard"],
   ["capacidade", "Capacidade & Ocupação", "activity"],
@@ -8309,16 +8823,17 @@ function _renderKPIs(){
   });
   el("kpiFrom").addEventListener("change",e=>{kpiFrom=e.target.value;kpiPeriodMode="custom";const pIni=el("kpiPeriodoDataInicio"); if(pIni) pIni.value=kpiFrom; atualizarPainelAtivo("kpis");});
   el("kpiTo").addEventListener("change",e=>{kpiTo=e.target.value;kpiPeriodMode="custom";const pFim=el("kpiPeriodoDataFim"); if(pFim) pFim.value=kpiTo; atualizarPainelAtivo("kpis");});
-  el("kpiScope").addEventListener("change",e=>{kpiScope=e.target.value;renderKPIs();});
+  el("kpiScope").addEventListener("change",e=>{kpiScope=e.target.value; atualizarPainelAtivo("kpis");});
 
   // Computa tudo de uma vez
   const dias=kpiDays(), fer=feriadosMap(), ns=kpiAnalysts();
+  const SRC = _kpiSrcEscopado ? KPI_DATA : DATA; // Fase 2: lê o recorte escopado quando a carga foi filtrada por escopo
   if(!dias.length){el("kpiBody").innerHTML='<div class="rep-empty">Selecione um período válido.</div>';return;}
   if(!ns.length){el("kpiBody").innerHTML='<div class="rep-empty">Nenhum analista no escopo selecionado.</div>';return;}
-  if(kpiTab==="capac"){ try{ el("kpiBody").innerHTML=_capacKpiBody(ns,dias,fer); }catch(e){ el("kpiBody").innerHTML='<div class="rep-empty">Capacitação indisponível: '+enc(e.message||e)+'</div>'; } lucideRefresh(); return; }
+  if(kpiTab==="capac"){ try{ el("kpiBody").innerHTML=_capacKpiBody(ns,dias,fer,SRC); }catch(e){ el("kpiBody").innerHTML='<div class="rep-empty">Capacitação indisponível: '+enc(e.message||e)+'</div>'; } lucideRefresh(); return; }
 
   // Agregados por analista
-  const perAn=ns.map(n=>{const c=contarSlots(n,dias,fer);return Object.assign({nome:n,lider:liderDe(n)||"—"},c);});
+  const perAn=ns.map(n=>{const c=contarSlots(n,dias,fer,SRC);return Object.assign({nome:n,lider:liderDe(n)||"—"},c);});
   // Totais globais — 5 tipos + livre/vazio/feriadoAuto
   const tot=perAn.reduce((a,r)=>{["total","livre","proj","dsc","rot","intn","svc","aus","feriadoAuto","vazio","ocupado"].forEach(k=>a[k]=(a[k]||0)+(r[k]||0));return a;},{});
   const baseUtil=tot.total-tot.aus;
@@ -8505,7 +9020,7 @@ function _renderKPIs(){
   try{
     const isoSet=new Set(dias.map(d=>toISO(d)));
     const exigeMap={}; (REG.atividades||[]).forEach(a=>{if(a.exigeObs)exigeMap[a.nome]=true;});
-    Object.entries(DATA||{}).forEach(([k,r])=>{
+    Object.entries(SRC||{}).forEach(([k,r])=>{
       if(!r||r.feriado)return;
       const parts=k.split("__"); const an=parts[0], iso=parts[1];
       if(!ns.includes(an)||!isoSet.has(iso))return;
@@ -8527,7 +9042,7 @@ function _renderKPIs(){
       totPrev={proj:0,dsc:0,svc:0,rot:0,intn:0,aus:0,livre:0,total:0};
       ns.forEach(an=>{ diasPrev.forEach(iso=>{ SLOTS.filter(s=>!s.lunch).forEach(s=>{
         totPrev.total++;
-        const r=DATA[key(an,iso,s.id)];
+        const r=SRC[key(an,iso,s.id)];
         if(ehSlotLivre(r)){totPrev.livre++;return;}
         if(r.feriado){totPrev.aus++;return;}
         const c=categoria(r);
@@ -8562,7 +9077,7 @@ function _renderKPIs(){
     const ativsDoTipo=new Set((REG.atividades||[]).filter(a=>a.tipo===t.id).map(a=>a.nome));
     const isoSet=new Set(dias.map(d=>toISO(d)));
     const cntAtv={}; const ansSet=new Set(); const projSet=new Set();
-    Object.entries(DATA).forEach(([k,r])=>{
+    Object.entries(SRC).forEach(([k,r])=>{
       if(!r||r.feriado)return;
       const [an,iso,_s]=k.split("__");
       if(!ns.includes(an)||!isoSet.has(iso))return;
@@ -8597,7 +9112,7 @@ function _renderKPIs(){
   // Para cada atividade ATIVA: # slots no período, # analistas distintos, variação vs período anterior
   const perAtv={};
   const isoSet=new Set(dias.map(d=>toISO(d)));
-  Object.entries(DATA).forEach(([k,r])=>{
+  Object.entries(SRC).forEach(([k,r])=>{
     if(!r||r.feriado||!r.atividade)return;
     const [an,iso,_s]=k.split("__");
     if(!ns.includes(an)||!isoSet.has(iso))return;
@@ -8672,7 +9187,7 @@ function _renderKPIs(){
   // === Qualidade ===
   // % de slots com observação, taxa de pendência, slots de feriado automático
   let slotsComObs=0, slotsExigeObs=0, slotsTrabalhados=0;
-  Object.entries(DATA).forEach(([k,r])=>{
+  Object.entries(SRC).forEach(([k,r])=>{
     if(!r||r.feriado||!r.atividade)return;
     const [an,iso,_s]=k.split("__");
     if(!ns.includes(an)||!isoSet.has(iso))return;
@@ -10505,6 +11020,9 @@ function bind(){
   { const mb=el("mapaBtn"); if(mb)mb.addEventListener("click",openMapa);
     const mc=el("mapaClose"); if(mc)mc.addEventListener("click",closeMapa);
     const mo=el("mapaOverlay"); if(mo)mo.addEventListener("click",e=>{if(e.target.id==="mapaOverlay")closeMapa();}); }
+  { const pb=el("preGoLiveBtn"); if(pb)pb.addEventListener("click",openPreGoLive);
+    const pc=el("preGoLiveClose"); if(pc)pc.addEventListener("click",closePreGoLive);
+    const po=el("preGoLiveOverlay"); if(po)po.addEventListener("click",e=>{if(e.target.id==="preGoLiveOverlay")closePreGoLive();}); }
   // Esteira de Projetos
   el("esteiraClose").addEventListener("click",closeEsteira);
   el("esteiraOverlay").addEventListener("click",e=>{if(e.target.id==="esteiraOverlay")closeEsteira();});
@@ -10866,7 +11384,7 @@ function capacBadgeFor(nome){
   </div>`;
 }
 
-function _capacKpiBody(ns, dias, fer){
+function _capacKpiBody(ns, dias, fer, src){
   const recs = ns.map(n=>({ nome:n, rec:findCapFor(n) }));
   const comCap = recs.filter(x=>x.rec);
   const total = ns.length;
@@ -10882,7 +11400,7 @@ function _capacKpiBody(ns, dias, fer){
   const risco=[];
   recs.forEach(x=>{
     if(!x.rec || !x.rec.theoretical) return;
-    let proj=0; try{ proj=(contarSlots(x.nome,dias,fer)||{}).proj||0; }catch(e){ proj=0; }
+    let proj=0; try{ proj=(contarSlots(x.nome,dias,fer,src)||{}).proj||0; }catch(e){ proj=0; }
     if(proj>0) risco.push({ nome:x.nome, etapa:_capStageShort(x.rec.stage), track:x.rec.track, slots:proj });
   });
 
