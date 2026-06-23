@@ -1695,7 +1695,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.88.0";
+const APP_VERSION = "1.88.1";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -4899,11 +4899,13 @@ function _tarefasOrdenadas(l){
   const cat=tarefasDaAtividade(l&&l.atv||"");
   const catNomes=new Set(cat.map(t=>t.nome));
   const stored=Array.isArray(l&&l.tarefas)?l.tarefas:[];
+  const ocultas=new Set((Array.isArray(l&&l.tarefasOcultas)?l.tarefasOcultas:[]).map(n=>_normProj(n))); // tarefas do catálogo removidas SÓ deste projeto (D1)
   const out=[], seen=new Set();
   // mantém tarefas do catálogo E as incluídas manualmente no projeto (manual:true), mesmo que
   // não estejam no catálogo da atividade — permite "incluir tarefa avulsa" por projeto.
-  stored.forEach(s=>{ if(s&&(catNomes.has(s.nome)||s.manual)&&!seen.has(s.nome)){ const o={nome:s.nome, ini:s.ini||"", fim:s.fim||""}; if(s.manual)o.manual=true; out.push(o); seen.add(s.nome); } });
-  cat.forEach(t=>{ if(!seen.has(t.nome)){ out.push({nome:t.nome, ini:"", fim:""}); seen.add(t.nome); } });
+  // tarefasOcultas suprime APENAS as do catálogo neste projeto (a avulsa/manual sempre aparece).
+  stored.forEach(s=>{ if(s&&(catNomes.has(s.nome)||s.manual)&&!seen.has(s.nome)){ if(!s.manual&&ocultas.has(_normProj(s.nome)))return; const o={nome:s.nome, ini:s.ini||"", fim:s.fim||""}; if(s.manual)o.manual=true; out.push(o); seen.add(s.nome); } });
+  cat.forEach(t=>{ if(!seen.has(t.nome)&&!ocultas.has(_normProj(t.nome))){ out.push({nome:t.nome, ini:"", fim:""}); seen.add(t.nome); } });
   return out;
 }
 function _tarefasLinha(l){
@@ -4977,7 +4979,9 @@ function _pvIncluirTarefa(lineId, nome){
   const l=(p.previstoLinhas||[]).find(x=>x&&x.id===lineId); if(!l){ alert("Selecione a atividade do cronograma que receberá a tarefa."); return false; }
   const arr=_materializarTarefas(l);
   if(arr.some(t=>t&&_normProj(t.nome)===_normProj(nome))){ alert("Essa tarefa já está nessa atividade."); return false; }
-  arr.push({nome, ini:"", fim:"", manual:true});
+  const ehCat=tarefasDaAtividade(l.atv||"").some(t=>t&&_normProj(t.nome)===_normProj(nome));
+  if(Array.isArray(l.tarefasOcultas)) l.tarefasOcultas=l.tarefasOcultas.filter(n=>_normProj(n)!==_normProj(nome)); // reincluir desfaz a ocultação (D1)
+  if(!ehCat) arr.push({nome, ini:"", fim:"", manual:true});   // só vira avulsa quando NÃO existe no catálogo da atividade; do catálogo, basta desocultar
   if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
   saveReg(); _cronRefresh(); return true;
 }
@@ -4987,7 +4991,14 @@ function _pvRemoverTarefa(lineIdx, nome){
   const p=_pvLiveProj(); if(!p||!canEditAction("cronograma"))return;
   const l=(p.previstoLinhas||[])[lineIdx]; if(!l)return;
   const arr=_materializarTarefas(l);
-  l.tarefas=arr.filter(t=>!(t&&t.nome===nome && t.manual));
+  const alvo=arr.find(t=>t&&t.nome===nome); if(!alvo)return;
+  const ehCatalogo=!alvo.manual;
+  if(ehCatalogo && !confirm(`Remover a tarefa "${nome}" do cronograma deste projeto?\nEla continua no catálogo e pode ser reincluída pela barra "Incluir tarefa".`))return;
+  l.tarefas=arr.filter(t=>!(t&&t.nome===nome));   // tira a entrada (datas) da linha — vale p/ avulsa e catálogo
+  if(ehCatalogo){                                  // catálogo: registra como oculta p/ não reaparecer via _tarefasOrdenadas (D1)
+    l.tarefasOcultas=Array.isArray(l.tarefasOcultas)?l.tarefasOcultas:[];
+    if(!l.tarefasOcultas.some(n=>_normProj(n)===_normProj(nome))) l.tarefasOcultas.push(nome);
+  }
   if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
   saveReg(); _cronRefresh();
 }
@@ -5054,14 +5065,13 @@ function _renderPrevLinhas(){
         const flag=t.foraJanela?`<span class="pvt-flag" title="Fora da janela da atividade — ajuste as datas">!</span>`:"";
         if(podeEdT){
           return `<div class="pvt-row${t.complete?"":" pvt-inc"}">
-            <div class="pvt-top"><span class="pvt-num">${idx+1}.${t.num}</span>
-              <span class="pvt-move"><button class="pvt-up" data-li="${idx}" data-tn="${enc(t.nome)}" title="Subir"${tj===0?" disabled":""}>↑</button><button class="pvt-dn" data-li="${idx}" data-tn="${enc(t.nome)}" title="Descer"${tj===tl.length-1?" disabled":""}>↓</button></span>
-              <span class="pvt-nm" title="${enc(t.nome)}">${enc(t.nome)}</span>${flag}${t.manual?`<span class="pvt-tagm" title="Tarefa incluída neste projeto (não vem do catálogo)">avulsa</span><button class="pvt-del" data-li="${idx}" data-tn="${enc(t.nome)}" title="Remover tarefa avulsa">×</button>`:""}</div>
-            <div class="pvt-dates">
-              <label class="pvt-dt"><span>Início</span><input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||'')}" max="${enc(l.fim||'')}"></label>
-              <span class="pvt-arr">→</span>
-              <label class="pvt-dt"><span>Término</span><input type="date" class="pvt-fim" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.fim)}" min="${enc(t.ini||l.ini||'')}" max="${enc(l.fim||'')}"></label>
-            </div>
+            <span class="pvt-num">${idx+1}.${t.num}</span>
+            <span class="pvt-move"><button class="pvt-up" data-li="${idx}" data-tn="${enc(t.nome)}" title="Subir"${tj===0?" disabled":""}>↑</button><button class="pvt-dn" data-li="${idx}" data-tn="${enc(t.nome)}" title="Descer"${tj===tl.length-1?" disabled":""}>↓</button></span>
+            <span class="pvt-nm" title="${enc(t.nome)}">${enc(t.nome)}</span>${flag}${t.manual?`<span class="pvt-tagm" title="Tarefa incluída neste projeto (não vem do catálogo)">avulsa</span>`:""}
+            <label class="pvt-dt"><span>Início</span><input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||'')}" max="${enc(l.fim||'')}"></label>
+            <span class="pvt-arr">→</span>
+            <label class="pvt-dt"><span>Término</span><input type="date" class="pvt-fim" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.fim)}" min="${enc(t.ini||l.ini||'')}" max="${enc(l.fim||'')}"></label>
+            <button class="pvt-del" data-li="${idx}" data-tn="${enc(t.nome)}" title="Remover tarefa do cronograma deste projeto">×</button>
           </div>`;
         }
         const dt=t.complete?`${fmtDM(parseISO(t.ini))}→${fmtDM(parseISO(t.fim))}`:"sem data";
