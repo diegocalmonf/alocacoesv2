@@ -92,6 +92,7 @@
     <button class="sb-link" data-nav="discovery" id="discoveryBtn" title="Linha do Tempo - Discovery"><i data-lucide="search"></i>Linha do Tempo - Discovery</button>
     <button class="sb-link" id="reportsBtn" title="Relatórios"><i data-lucide="file-bar-chart-2"></i>Relatórios</button>
     <button class="sb-link" id="mapaBtn" title="Mapa do Projeto"><i data-lucide="map"></i>Mapa do Projeto</button>
+    <button class="sb-link" id="preGoLiveBtn" title="Checklist"><i data-lucide="clipboard-check"></i>Checklist</button>
     <button class="sb-link" id="kpisBtn" title="KPIs"><i data-lucide="line-chart"></i>KPIs</button>
 
     <div class="sb-section">Gestão</div>
@@ -573,8 +574,20 @@
   </div>
 </div>
 
+<!-- ===== Checklist Pré Go-Live (Fase 2 · ação) ===== -->
+<div class="overlay as-page" id="preGoLiveOverlay">
+  <div class="modal big">
+    <div class="modal-h">
+      <div><div class="t"><i data-lucide="clipboard-check"></i>Checklist</div><div class="s">Vincule checklists ao projeto, execute os itens e acompanhe o andamento</div></div>
+      <button class="x" id="preGoLiveClose"><i data-lucide="x"></i></button>
+    </div>
+    <div class="act-body" id="preGoLiveBody"></div>
+  </div>
+</div>
+
 <!-- Container de impressão da ATA (Fase 3): preenchido sob demanda; visível só em @media print -->
 <div id="ataPrint" aria-hidden="true"></div>
+<div id="pglPrint" aria-hidden="true"></div>
 
 <!-- Script no FINAL do body: garante que todo o DOM já existe antes do bind()/init -->
 <script src="./js/script.js"></script>
