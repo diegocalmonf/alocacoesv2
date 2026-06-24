@@ -1695,7 +1695,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.88.0";
+const APP_VERSION = "1.88.2";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -5310,36 +5310,34 @@ function _pvAplicar(p){
     // Conjunto desejado de células
     const desired=new Map();   // k -> {atv, linha}
     linhas.forEach(l=>{ _pvExpandir(l).forEach(({k})=>{ if(!desired.has(k)) desired.set(k,{atv:l.atv, linha:l.id}); }); });
-    // 1) Reconcilia: remove previsto de origem deste projeto que não é mais desejado
-    let removidos=0, esvaziados=0;
+    // 1) Reconcilia: remove previsto de origem deste projeto que não é mais desejado.
+    //    NUNCA toca no realizado (DATA): realizado é execução real — o apply não planta nem apaga.
+    let removidos=0;
     Object.keys(PREV).forEach(k=>{
       const pv=PREV[k];
       if(!pv || pv.origem!==tagProj) return;        // só o previsto DESTE projeto
       if(desired.has(k)) return;                     // ainda desejado
-      const real=DATA[k];
-      if(real && _normProj(real.cliente)===_normProj(p.nome) && (real.atividade||"")===(pv.atividade||"")){ delete DATA[k]; esvaziados++; }
       delete PREV[k]; removidos++;
     });
-    // 2) Escreve o desejado
-    let prevNovos=0, realNovos=0, ocupadoOutro=0;
+    // 2) Escreve SOMENTE o previsto desejado. O realizado NÃO é plantado aqui:
+    //    uma célula prevista conta como realizada quando já existe realizado do MESMO
+    //    projeto no slot (ver _mapaCalc); caso contrário, fica pendente.
+    let prevNovos=0;
     desired.forEach((v,k)=>{
       const pvAntes=PREV[k];
       if(!_temConteudo(pvAntes) || pvAntes.origem===tagProj){
         if(!_temConteudo(pvAntes)) prevNovos++;
         PREV[k]={cliente:p.nome, atividade:v.atv, origem:tagProj, linha:v.linha};
       }
-      const real=DATA[k];
-      if(!_temConteudo(real)){ DATA[k]={cliente:p.nome, atividade:v.atv}; realNovos++; }
-      else if(_normProj(real.cliente)!==_normProj(p.nome)) ocupadoOutro++;
     });
     p.previstoAplicadoEm=new Date().toISOString();
     persist(); persistPrev();
-    try{ audit("project.previsto.aplicar", p.nome, null, {linhas:linhas.length, prevNovos, realNovos, removidos, esvaziados}); }catch(e){}
+    try{ audit("project.previsto.aplicar", p.nome, null, {linhas:linhas.length, prevNovos, removidos}); }catch(e){}
     _cronRefresh(); renderAll();
-    let msg=`Alocações previstas aplicadas na grade de "${p.nome}":\n• ${desired.size} slot(s) previstos\n• ${realNovos} preenchido(s) no realizado (estavam livres)`;
-    if(ocupadoOutro) msg+=`\n• ${ocupadoOutro} mantido(s) por já estarem ocupados por outro projeto (divergência)`;
-    if(removidos) msg+=`\n• ${removidos} previsto(s) antigo(s) reconciliado(s)${esvaziados?` · ${esvaziados} realizado(s) revertido(s) a livre`:""}`;
+    let msg=`Previsto aplicado para "${p.nome}":\n• ${desired.size} slot(s) previstos`;
+    if(removidos) msg+=`\n• ${removidos} previsto(s) antigo(s) reconciliado(s)`;
     if(soPlano) msg+=`\n• ${soPlano} atividade(s) só de plano ignorada(s) (sem analista/slot)`;
+    msg+=`\n\nO realizado aparece automaticamente quando houver execução do mesmo projeto no slot.`;
     alert(msg);
   });
 }
@@ -5490,6 +5488,71 @@ function abrirCopiarCronograma(){
     const r=_copiarCronograma(destLive, src, novoIni);
     close(); renderCronograma();
     alert(`Cronograma de "${src.nome}" copiado para "${dest.nome}":\n• ${r.linhas} atividade(s) acrescentada(s)\n• ${r.tarefas} tarefa(s)\n\nAs linhas entraram como “só plano” — atribua analista/slot e ajuste as datas conforme necessário.`);
+  });
+  lucideRefresh();
+}
+
+/* ===================== LIMPEZA DE SLOTS (admin · D-MP2) =====================
+   Remove do realizado (DATA) as células que foram PLANTADAS automaticamente por applies
+   antigos do cronograma (antes da v1.88.1), preservando execução real. Critério:
+   previsto deste projeto (origem) + realizado do MESMO projeto + sem observação + (opção) futuro. */
+function _ehRealizadoPlantado(k, projNome, soFuturos, hojeIso){
+  const pv=PREV[k];
+  if(!pv || pv.origem!=="projeto:"+projNome) return false;        // tem previsto DESTE projeto
+  const r=DATA[k];
+  if(!r || r.feriado) return false;
+  if(_normProj(r.cliente)!==_normProj(projNome)) return false;     // realizado do MESMO projeto
+  if(r.obs || r.obsAt || r.obsBy || r.obsPendente) return false;   // qualquer marca = execução real → preserva
+  if(soFuturos){ const iso=k.split("__")[1]; if(!(iso>hojeIso)) return false; }
+  return true;
+}
+function _coletarSlotsPlantados(projNome, soFuturos){
+  const hojeIso=toISO(new Date()); const out=[];
+  Object.keys(DATA).forEach(k=>{
+    if(_ehRealizadoPlantado(k,projNome,soFuturos,hojeIso)){ const parts=k.split("__"); out.push({k,c:parts[0],iso:parts[1],slot:parts[2]}); }
+  });
+  out.sort((a,b)=>a.iso.localeCompare(b.iso)||a.c.localeCompare(b.c,"pt"));
+  return out;
+}
+function abrirLimparSlots(){
+  if(!isAdmin()){ alert("Apenas administradores podem limpar slots."); return; }
+  const p=_pvLiveProj();
+  if(!p||!p.nome){ alert("Selecione um projeto no Cronograma antes de limpar."); return; }
+  const old=el("limpOverlay"); if(old)old.remove();
+  const ov=document.createElement("div"); ov.id="limpOverlay"; ov.className="imp-overlay";
+  ov.innerHTML=`<div class="imp-modal">
+    <div class="imp-head"><div><b>Limpar slots realizados (admin)</b><div class="imp-sub">Projeto: <b>${enc(p.nome)}</b> · remove o realizado plantado automaticamente, preservando execução real</div></div><button class="imp-x" id="limpClose">×</button></div>
+    <div class="imp-body">
+      <div class="imp-row"><label><input type="checkbox" id="limpFut" checked> Somente datas futuras (recomendado)</label></div>
+      <div class="imp-warn">Remove células com <b>previsto deste projeto</b> + <b>realizado do mesmo projeto</b> + <b>sem observação</b> (sinal de execução real). A opção acima restringe a datas <b>após hoje</b> — o caso típico de realizado plantado. <b>Ação irreversível.</b></div>
+      <div class="imp-row"><span class="imp-counts" id="limpResumo">Calculando…</span></div>
+      <div id="limpAmostra" class="imp-warn" style="max-height:150px;overflow:auto"></div>
+    </div>
+    <div class="imp-foot"><button class="btn" id="limpCancel">Cancelar</button><button class="btn primary" id="limpDo"><i data-lucide="eraser"></i> Remover</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  el("limpClose").onclick=close; el("limpCancel").onclick=close;
+  ov.addEventListener("click",e=>{ if(e.target===ov)close(); });
+  let _alvo=[];
+  function recomputar(){
+    el("limpResumo").textContent="Carregando histórico completo…";
+    _garantirHistoricoTudo().then(()=>{
+      _alvo=_coletarSlotsPlantados(p.nome, el("limpFut").checked);
+      el("limpResumo").innerHTML=`→ <b>${_alvo.length}</b> slot(s) serão removidos do realizado`;
+      const amostra=_alvo.slice(0,12).map(x=>`${enc(x.c)} · ${x.iso} · ${enc(x.slot)}`).join("<br>");
+      el("limpAmostra").innerHTML=_alvo.length?(amostra+(_alvo.length>12?`<br>… e mais ${_alvo.length-12}`:"")):"Nenhum slot plantado encontrado com este critério.";
+    }).catch(e=>{ el("limpResumo").textContent="Falha ao carregar histórico: "+(e&&e.message||e); });
+  }
+  el("limpFut").addEventListener("change",recomputar); recomputar();
+  el("limpDo").addEventListener("click",()=>{
+    if(!_alvo.length){ alert("Nada a remover com o critério atual."); return; }
+    if(!confirm(`Remover ${_alvo.length} slot(s) realizados plantados de "${p.nome}"?\n\nEsta ação é irreversível.`)) return;
+    _alvo.forEach(x=>{ delete DATA[x.k]; });
+    persist();
+    try{ audit("project.slots.limpar", p.nome, null, {removidos:_alvo.length, soFuturos:el("limpFut").checked}); }catch(e){}
+    const n=_alvo.length; close(); renderAll();
+    alert(`${n} slot(s) realizados plantados removidos de "${p.nome}".\n\nO Mapa do Projeto passa a refletir só o previsto e a execução real.`);
   });
   lucideRefresh();
 }
@@ -5791,7 +5854,7 @@ function renderCronograma(){
   const toggleHTML=p?`<div class="cron-viewtoggle" role="tablist" aria-label="Modo de visualização">
       <button class="cvt-btn ${!isGantt?'on':''}" id="cronViewLista" role="tab" aria-selected="${!isGantt}"><i data-lucide="list"></i> Lista</button>
       <button class="cvt-btn ${isGantt?'on':''}" id="cronViewGantt" role="tab" aria-selected="${isGantt}"><i data-lucide="gantt-chart"></i> Gantt</button>
-    </div>${canEditAction("cronograma")?`<button class="cvt-btn cron-import" id="cronCopyBtn" title="Copiar a estrutura do cronograma de outro projeto"><i data-lucide="copy"></i> Copiar de…</button><button class="cvt-btn cron-import" id="cronImportBtn" title="Importar cronograma de um CSV"><i data-lucide="upload"></i> Importar CSV</button>`:""}`:"";
+    </div>${canEditAction("cronograma")?`<button class="cvt-btn cron-import" id="cronCopyBtn" title="Copiar a estrutura do cronograma de outro projeto"><i data-lucide="copy"></i> Copiar de…</button><button class="cvt-btn cron-import" id="cronImportBtn" title="Importar cronograma de um CSV"><i data-lucide="upload"></i> Importar CSV</button>`:""}${isAdmin()?`<button class="cvt-btn cron-import" id="cronLimparBtn" title="Limpar realizado plantado automaticamente (somente admin)"><i data-lucide="eraser"></i> Limpar slots</button>`:""}`:"";
   const corpo=p
     ? (isGantt?_cronGanttHTML(p):_previstoTabHTML(p))
     : `<div class="hint" style="padding:16px">Escolha um projeto acima para ver e editar o cronograma.</div>`;
@@ -5820,6 +5883,7 @@ function renderCronograma(){
   if(bCmp)bCmp.addEventListener("click",()=>{ _cronCompareBaseline=!_cronCompareBaseline; renderCronograma(); });
   const bImp=el("cronImportBtn"); if(bImp)bImp.addEventListener("click",abrirImportCronograma);
   const bCopy=el("cronCopyBtn"); if(bCopy)bCopy.addEventListener("click",abrirCopiarCronograma);
+  const bLimp=el("cronLimparBtn"); if(bLimp)bLimp.addEventListener("click",abrirLimparSlots);
   if(p && !isGantt) _bindCronograma(p);
   if(p && isGantt && !_cronEvolReady){
     _garantirHistoricoTudo().then(()=>{ _cronEvolReady=true; if(_cronView==="gantt"&&_cronProjNome===p.nome) renderCronograma(); });
