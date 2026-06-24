@@ -1695,7 +1695,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.88.2";
+const APP_VERSION = "1.88.3";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -4898,12 +4898,13 @@ function _previstoTabHTML(p){
 function _tarefasOrdenadas(l){
   const cat=tarefasDaAtividade(l&&l.atv||"");
   const catNomes=new Set(cat.map(t=>t.nome));
+  const ocultas=new Set(Array.isArray(l&&l.tarefasOcultas)?l.tarefasOcultas:[]); // tarefas de catálogo removidas neste projeto
   const stored=Array.isArray(l&&l.tarefas)?l.tarefas:[];
   const out=[], seen=new Set();
   // mantém tarefas do catálogo E as incluídas manualmente no projeto (manual:true), mesmo que
   // não estejam no catálogo da atividade — permite "incluir tarefa avulsa" por projeto.
-  stored.forEach(s=>{ if(s&&(catNomes.has(s.nome)||s.manual)&&!seen.has(s.nome)){ const o={nome:s.nome, ini:s.ini||"", fim:s.fim||""}; if(s.manual)o.manual=true; out.push(o); seen.add(s.nome); } });
-  cat.forEach(t=>{ if(!seen.has(t.nome)){ out.push({nome:t.nome, ini:"", fim:""}); seen.add(t.nome); } });
+  stored.forEach(s=>{ if(s&&(catNomes.has(s.nome)||s.manual)&&!seen.has(s.nome)){ if(!s.manual && ocultas.has(s.nome)){ seen.add(s.nome); return; } const o={nome:s.nome, ini:s.ini||"", fim:s.fim||""}; if(s.manual)o.manual=true; out.push(o); seen.add(s.nome); } });
+  cat.forEach(t=>{ if(!seen.has(t.nome) && !ocultas.has(t.nome)){ out.push({nome:t.nome, ini:"", fim:""}); seen.add(t.nome); } });
   return out;
 }
 function _tarefasLinha(l){
@@ -4975,19 +4976,32 @@ function _pvIncluirTarefa(lineId, nome){
   const p=_pvLiveProj(); if(!p||!canEditAction("cronograma"))return false;
   nome=(nome||"").trim(); if(!nome){ alert("Informe o nome da tarefa."); return false; }
   const l=(p.previstoLinhas||[]).find(x=>x&&x.id===lineId); if(!l){ alert("Selecione a atividade do cronograma que receberá a tarefa."); return false; }
+  // Se a tarefa estava oculta (tarefa de catálogo removida antes), reincluir = desocultar.
+  if(Array.isArray(l.tarefasOcultas) && l.tarefasOcultas.some(n=>_normProj(n)===_normProj(nome))){
+    l.tarefasOcultas=l.tarefasOcultas.filter(n=>_normProj(n)!==_normProj(nome));
+    if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
+    saveReg(); _cronRefresh(); return true;
+  }
   const arr=_materializarTarefas(l);
   if(arr.some(t=>t&&_normProj(t.nome)===_normProj(nome))){ alert("Essa tarefa já está nessa atividade."); return false; }
   arr.push({nome, ini:"", fim:"", manual:true});
   if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
   saveReg(); _cronRefresh(); return true;
 }
-// Remove uma tarefa avulsa (manual) de uma linha. Tarefas do catálogo não são removíveis aqui
-// (voltariam pelo catálogo) — só as incluídas manualmente.
+// Remove uma tarefa da linha do cronograma. Avulsa (manual) é apagada de vez; tarefa de catálogo
+// é OCULTADA neste projeto (tarefasOcultas) — reincluir pela barra "Incluir tarefa" a traz de volta.
 function _pvRemoverTarefa(lineIdx, nome){
   const p=_pvLiveProj(); if(!p||!canEditAction("cronograma"))return;
   const l=(p.previstoLinhas||[])[lineIdx]; if(!l)return;
   const arr=_materializarTarefas(l);
-  l.tarefas=arr.filter(t=>!(t&&t.nome===nome && t.manual));
+  const alvo=arr.find(t=>t&&t.nome===nome);
+  if(alvo && alvo.manual){
+    l.tarefas=arr.filter(t=>!(t&&t.nome===nome && t.manual));          // avulsa: remove de vez
+  }else{
+    if(!Array.isArray(l.tarefasOcultas)) l.tarefasOcultas=[];           // catálogo: oculta neste projeto
+    if(!l.tarefasOcultas.includes(nome)) l.tarefasOcultas.push(nome);
+    l.tarefas=arr.filter(t=>!(t&&t.nome===nome && !t.manual));          // limpa eventual entrada datada
+  }
   if(p.previstoAplicadoEm) p.previstoAplicadoEm="";
   saveReg(); _cronRefresh();
 }
@@ -5056,7 +5070,7 @@ function _renderPrevLinhas(){
           return `<div class="pvt-row${t.complete?"":" pvt-inc"}">
             <div class="pvt-top"><span class="pvt-num">${idx+1}.${t.num}</span>
               <span class="pvt-move"><button class="pvt-up" data-li="${idx}" data-tn="${enc(t.nome)}" title="Subir"${tj===0?" disabled":""}>↑</button><button class="pvt-dn" data-li="${idx}" data-tn="${enc(t.nome)}" title="Descer"${tj===tl.length-1?" disabled":""}>↓</button></span>
-              <span class="pvt-nm" title="${enc(t.nome)}">${enc(t.nome)}</span>${flag}${t.manual?`<span class="pvt-tagm" title="Tarefa incluída neste projeto (não vem do catálogo)">avulsa</span><button class="pvt-del" data-li="${idx}" data-tn="${enc(t.nome)}" title="Remover tarefa avulsa">×</button>`:""}</div>
+              <span class="pvt-nm" title="${enc(t.nome)}">${enc(t.nome)}</span>${flag}${t.manual?`<span class="pvt-tagm" title="Tarefa incluída neste projeto (não vem do catálogo)">avulsa</span>`:""}<button class="pvt-del" data-li="${idx}" data-tn="${enc(t.nome)}" title="${t.manual?'Remover tarefa avulsa':'Remover tarefa do catálogo (oculta neste projeto · reinclua para trazer de volta)'}">×</button></div>
             <div class="pvt-dates">
               <label class="pvt-dt"><span>Início</span><input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||'')}" max="${enc(l.fim||'')}"></label>
               <span class="pvt-arr">→</span>
