@@ -1695,7 +1695,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.88.3";
+const APP_VERSION = "1.88.4";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -5913,13 +5913,16 @@ function _bindCronograma(p){
   ["pvAn","pvSlot","pvAtv","pvIni","pvAdd"].forEach(id=>{ const e=el(id); if(e) e.disabled=!podeEditar; });
   const add=el("pvAdd");
   if(add)add.addEventListener("click",()=>{
-    if(!canEditAction("cronograma")){ alert("Você não tem permissão de edição no Cronograma de Projetos."); return; }
-    if(!p.nome){ alert("Projeto inválido."); return; }
-    const anEl=el("pvAn"); const an=anEl?anEl.value:"";
-    const slot=el("pvSlot").value, atv=el("pvAtv").value, ini=el("pvIni").value;
-    if(!an){alert("Este projeto não tem analistas vinculados. Vincule na aba “Dados do projeto”.");return;}
-    if(!atv){alert("Selecione uma atividade.");return;}
-    _pvAddLinha(p,{an,slot,atv,ini});
+    try{
+      if(!canEditAction("cronograma")){ alert("Você não tem permissão de edição no Cronograma de Projetos."); return; }
+      const proj=_pvLiveProj();   // SEMPRE o projeto vivo de REG (evita referência velha após importar/salvar)
+      if(!proj||!proj.nome){ alert("Projeto inválido. Reabra o cronograma e tente novamente."); return; }
+      const anEl=el("pvAn"); const an=anEl?anEl.value:"";
+      const slot=el("pvSlot")?el("pvSlot").value:"", atv=el("pvAtv")?el("pvAtv").value:"", ini=el("pvIni")?el("pvIni").value:"";
+      if(!an){alert("Este projeto não tem analistas vinculados. Vincule na aba “Dados do projeto”.");return;}
+      if(!atv){alert("Selecione uma atividade.");return;}
+      _pvAddLinha(proj,{an,slot,atv,ini});
+    }catch(e){ alert("Não foi possível incluir a atividade: "+((e&&e.message)||e)); }
   });
   _renderPrevLinhas();
 }
