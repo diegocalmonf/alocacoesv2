@@ -909,17 +909,10 @@ function _lerBucketsPorPeriodo(dataInicioStr, dataFimStr){
   if(!_db) return Promise.resolve({});
   if(!dataInicioStr || !dataFimStr) return Promise.resolve({});
 
-  const mesesAlvo = new Set();
-  let atual = new Date(dataInicioStr + "T00:00:00");
-  const fim = new Date(dataFimStr + "T23:59:59");
-
-  while(atual <= fim){
-    mesesAlvo.add(atual.toISOString().slice(0, 7));
-    atual.setMonth(atual.getMonth() + 1);
-  }
+  const mesesAlvo = _mesesNoIntervalo(dataInicioStr, dataFimStr);   // strings YYYY-MM (sem overflow de fim-de-mês do Date)
 
   const mapResult = {};
-  const promises = Array.from(mesesAlvo).map(m => {
+  const promises = mesesAlvo.map(m => {
     return _db.ref(ALLOC_DATA_PATH + "/" + m).once("value").then(s => {
       Object.assign(mapResult, _allocBucketToMap(s.val()));
     });
@@ -1004,17 +997,10 @@ function filtrarDadosPorDataExata(dadosBrutos, dataInicioStr, dataFimStr){
 function _lerBucketsPrevPorPeriodo(dataInicioStr, dataFimStr){
   if(!_db) return Promise.resolve({});
 
-  const mesesAlvo = new Set();
-  let atual = new Date(dataInicioStr + "T00:00:00");
-  const fim = new Date(dataFimStr + "T23:59:59");
-
-  while(atual <= fim){
-    mesesAlvo.add(atual.toISOString().slice(0, 7));
-    atual.setMonth(atual.getMonth() + 1);
-  }
+  const mesesAlvo = _mesesNoIntervalo(dataInicioStr, dataFimStr);   // strings YYYY-MM (sem overflow de fim-de-mês do Date)
 
   const mapResult = {};
-  const promises = Array.from(mesesAlvo).map(m => {
+  const promises = mesesAlvo.map(m => {
     return _db.ref(PREV_DATA_PATH + "/" + m).once("value").then(s => {
       Object.assign(mapResult, _prevBucketToMap(s.val()));
     });
@@ -1695,7 +1681,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.91.2";
+const APP_VERSION = "1.93.2";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -5098,6 +5084,7 @@ function _marcarTarefaExec(cli, lineId, tarefaNome, status, an, iso, slot){
   }else{
     delete t.exec;
   }
+  _esteiraAlimentarDoCronograma(p);   // marcação muda o realizado → reflete na Esteira (datas + Go-Live realizado)
   saveReg();
   return true;
 }
@@ -5574,6 +5561,7 @@ function _pvAplicar(p){
       }
     });
     p.previstoAplicadoEm=new Date().toISOString();
+    _esteiraAlimentarDoCronograma(p);   // alimenta as datas das etapas da Esteira a partir do cronograma
     persist(); persistPrev();
     try{ audit("project.previsto.aplicar", p.nome, null, {linhas:linhas.length, prevNovos, removidos}); }catch(e){}
     _cronRefresh(); renderAll();
@@ -7871,6 +7859,9 @@ function thSort(col,label,cls){
   const s=repSort.col===col?("sorted"+(repSort.asc?" asc":"")):"";
   return `<th class="${cls||''} ${s}" data-sort="${col}">${label}</th>`;
 }
+// Célula de ocupação com faixa de cor: alta = verde, média = âmbar, baixa = vermelho.
+function _ocupFaixa(pct){ pct=Number(pct)||0; return pct>=75?"hi":(pct>=40?"mid":"lo"); }
+function occCell(pct){ const f=_ocupFaixa(pct); const w=Math.min(100,Math.max(0,Number(pct)||0)); return `<div class="occ ${f}"><span class="pct">${pct}%</span><div class="occ-bar"><i style="width:${w}%"></i></div></div>`; }
 function bindSort(){
   el("repBody").querySelectorAll("th[data-sort]").forEach(th=>th.addEventListener("click",()=>{
     const c=th.dataset.sort;
@@ -7932,7 +7923,7 @@ function renderRepAlocacao(){
     <td class="num">${r.service}</td><td class="num">${r.rotina}</td><td class="num">${r.interna}</td>
     <td class="num">${r.ausencia}</td><td class="num">${r.livre}</td>
     <td class="num">${r.vazio}</td>
-    <td class="num"><span class="pct">${r.ocupacao}%</span><div class="occ-bar"><i style="width:${r.ocupacao}%"></i></div></td>
+    <td class="num">${occCell(r.ocupacao)}</td>
   </tr>`).join("");
   el("repBody").innerHTML=`<div class="rep-actions"><div class="left">Período: <b>${fmtDM(parseISO(repFrom))} – ${fmtDM(parseISO(repTo))}</b> · ${dias.length} dia(s) útil(eis) · clique em uma coluna para ordenar</div></div>
     ${summary}<table class="rep-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
@@ -10280,13 +10271,53 @@ function projetosImplantacao(){ return (REG.projetos||[]).filter(p=>p.tipo==="im
 
 // Etapa auto-derivada: a etapa mais avançada cuja data de início está preenchida.
 // "" significa que nada foi iniciado.
+// E3 · etapa automática derivada da REALIZAÇÃO das atividades do cronograma:
+// avança quando a última atividade da etapa anterior está concluída, ou quando já há
+// atividade realizada na própria etapa. O override manual (p.etapaAtual) tem prioridade (etapaEfetivaDe).
+function _estLinhaAlgumReal(l){ return _tarefasLinha(l).some(t=>t&&t.exec&&t.exec.status==="realizada"); }
+function _estLinhaConcluida(l){ const ts=_tarefasLinha(l); return ts.length>0 && ts.every(t=>t&&t.exec&&t.exec.status==="realizada"); }
+function _estAtivsEtapa(p, eid){ return (p.previstoLinhas||[]).filter(l=>{ const a=atividadeObj(l.atv); return a&&a.etapa===eid; }); }
 function etapaAutoDe(p){
-  let cur="";
+  const comVinculo=ETAPAS.some(e=>_estAtivsEtapa(p,e.id).length);
+  if(comVinculo){
+    let cur="", anteriorConcluida=true;   // antes da 1ª etapa, "anterior" conta como concluída
+    for(const e of ETAPAS){
+      const ativs=_estAtivsEtapa(p,e.id);
+      if(!ativs.length) continue;          // etapa sem atividade vinculada no cronograma
+      const algumReal=ativs.some(_estLinhaAlgumReal);
+      if(algumReal||anteriorConcluida) cur=e.id;
+      const ultima=ativs.slice().sort((a,b)=>String(a.fim||"").localeCompare(String(b.fim||""))).pop();
+      anteriorConcluida = ultima ? _estLinhaConcluida(ultima) : false;
+    }
+    return cur;
+  }
+  // sem vínculo de etapas no cronograma → derivação antiga (última etapa com data preenchida)
+  let cur=""; ETAPAS.forEach(e=>{ const entrou=e.glPrev?!!p.goLiveRealizado:!!p[e.field]; if(entrou)cur=e.id; }); return cur;
+}
+// Alimenta as DATAS das etapas da Esteira a partir do cronograma. E1: sobrescreve onde o cronograma
+// tem a etapa. Discovery ← recebimento do projeto. Go-Live ← 1º slot da atividade Go-Live
+// (previsto = baseline; ajustado = vigente se reagendou; realizado = 1ª tarefa realizada da etapa).
+function _esteiraAlimentarDoCronograma(p){
+  if(!p||!Array.isArray(p.previstoLinhas)) return false;
+  const primeiroSlot=(eid)=>{ let m=null; p.previstoLinhas.forEach(l=>{ const a=atividadeObj(l.atv); if(!a||a.etapa!==eid||!l.ini)return; if(!m||l.ini<m.ini)m=l; }); return m; };
+  const realData=(eid)=>{ let r=""; p.previstoLinhas.forEach(l=>{ const a=atividadeObj(l.atv); if(!a||a.etapa!==eid)return; _tarefasLinha(l).forEach(t=>{ if(t&&t.exec&&t.exec.status==="realizada"&&t.exec.iso&&(!r||t.exec.iso<r))r=t.exec.iso; }); }); return r; };
   ETAPAS.forEach(e=>{
-    const entrou = e.glPrev ? !!p.goLiveRealizado : !!p[e.field];
-    if(entrou) cur=e.id;
+    if(e.id==="discovery"){ if(p.dtRecebimento) p.dtDiscovery=p.dtRecebimento; return; }
+    if(e.id==="golive"){
+      const gl=primeiroSlot("golive");
+      if(gl){
+        const bl=_baselineLinhaPorId(p, gl.id);
+        const prevIni=(bl&&bl.ini)?bl.ini:gl.ini;
+        if(prevIni) p.goLivePrevisto=prevIni;
+        p.goLiveAjustado=(bl&&bl.ini&&gl.ini&&bl.ini!==gl.ini)?gl.ini:"";
+      }
+      const rg=realData("golive"); if(rg) p.goLiveRealizado=rg;
+      return;
+    }
+    const s=primeiroSlot(e.id);
+    if(s&&s.ini) p[e.field]=s.ini;       // E1: sobrescreve onde o cronograma cobre a etapa
   });
-  return cur;
+  return true;
 }
 // Etapa efetiva: override manual (p.etapaAtual) tem prioridade; senão, automática.
 function etapaEfetivaDe(p){
