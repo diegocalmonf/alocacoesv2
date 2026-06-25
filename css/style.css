@@ -2256,7 +2256,7 @@ body.viewmode-geral .grid-card[data-editable="1"]{cursor:default !important}
 .btn-reag:hover{background:var(--orange);color:#fff;border-color:var(--orange)}
 .tk-tbl{width:100%;border-collapse:collapse;font-size:12.5px}
 .tk-tbl thead th{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--faint);font-weight:700;text-align:left;padding:8px 15px;background:#fafafa;border-bottom:1px solid var(--line)}
-.tk-tbl thead th.c-date{width:104px} .tk-tbl thead th.c-st{width:128px} .tk-tbl thead th.c-act{width:168px;text-align:right}
+.tk-tbl thead th.c-date{width:120px} .tk-tbl thead th.c-st{width:128px} .tk-tbl thead th.c-act{width:168px;text-align:right}
 .tk-tbl tbody td{padding:10px 15px;border-bottom:1px solid var(--line);vertical-align:middle}
 .tk-tbl tbody tr:last-child td{border-bottom:none}
 .tk-tbl tbody tr:hover{background:#fcfbfa}
@@ -2268,8 +2268,8 @@ body.viewmode-geral .grid-card[data-editable="1"]{cursor:default !important}
 .tk-num{font-family:'IBM Plex Mono',monospace;font-size:11px;color:var(--o-600);font-weight:600;flex:none}
 .tk-lbl{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tk-tagm{font-size:9.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);background:#f0f0f0;border:1px solid var(--line2);border-radius:5px;padding:1px 5px;font-weight:700}
-.tk-del{border:none;background:none;color:var(--line3);cursor:pointer;font-size:15px;line-height:1;padding:0 4px;opacity:0;transition:.12s}
-.tk-name:hover .tk-del{opacity:1} .tk-del:hover{color:var(--danger)}
+.tk-del{border:none;background:none;color:var(--line3);cursor:pointer;font-size:16px;line-height:1;padding:2px 6px;opacity:.55;transition:.12s}
+.tk-name:hover .tk-del{opacity:1} .tk-del:hover,.tk-del:active{color:var(--danger);opacity:1}
 .cell-date{font-family:'IBM Plex Mono',monospace;font-size:12.5px}
 .cell-date.prev{color:var(--muted)} .cell-date.reag{color:var(--o-600);font-weight:600} .cell-date.real{color:var(--ok);font-weight:600} .cell-date.none{color:var(--line3)}
 .pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;border-radius:999px;padding:3px 10px;border:1px solid}
