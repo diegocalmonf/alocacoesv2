@@ -1682,7 +1682,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.95.0";
+const APP_VERSION = "1.95.2";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -10369,8 +10369,18 @@ function projetosImplantacao(){ return (REG.projetos||[]).filter(p=>p.tipo==="im
 // E3 · etapa automática derivada da REALIZAÇÃO das atividades do cronograma:
 // avança quando a última atividade da etapa anterior está concluída, ou quando já há
 // atividade realizada na própria etapa. O override manual (p.etapaAtual) tem prioridade (etapaEfetivaDe).
-function _estLinhaAlgumReal(l){ return _tarefasLinha(l).some(t=>t&&t.exec&&t.exec.status==="realizada"); }
-function _estLinhaConcluida(l){ const ts=_tarefasLinha(l); return ts.length>0 && ts.every(t=>t&&t.exec&&t.exec.status==="realizada"); }
+function _estLinhaAlgumReal(p, l){
+  const ts=_tarefasLinha(l);
+  if(ts.length) return ts.some(t=>t&&t.exec&&t.exec.status==="realizada");
+  // gap B — linha SEM tarefas: conclui pela execução real do slot (realizado do mesmo projeto).
+  const cels=_pvExpandir(l); return cels.length>0 && cels.some(c=>_celRealizadaProj(c.k, p.nome));
+}
+function _estLinhaConcluida(p, l){
+  const ts=_tarefasLinha(l);
+  if(ts.length) return ts.every(t=>t&&t.exec&&t.exec.status==="realizada");
+  // gap B — linha SEM tarefas: concluída quando TODAS as células previstas têm realizado do projeto.
+  const cels=_pvExpandir(l); return cels.length>0 && cels.every(c=>_celRealizadaProj(c.k, p.nome));
+}
 function _estAtivsEtapa(p, eid){ return (p.previstoLinhas||[]).filter(l=>{ const a=atividadeObj(l.atv); return a&&a.etapa===eid; }); }
 function etapaAutoDe(p){
   const comVinculo=ETAPAS.some(e=>_estAtivsEtapa(p,e.id).length);
@@ -10379,10 +10389,10 @@ function etapaAutoDe(p){
     for(const e of ETAPAS){
       const ativs=_estAtivsEtapa(p,e.id);
       if(!ativs.length) continue;          // etapa sem atividade vinculada no cronograma
-      const algumReal=ativs.some(_estLinhaAlgumReal);
+      const algumReal=ativs.some(l=>_estLinhaAlgumReal(p,l));
       if(algumReal||anteriorConcluida) cur=e.id;
       const ultima=ativs.slice().sort((a,b)=>String(a.fim||"").localeCompare(String(b.fim||""))).pop();
-      anteriorConcluida = ultima ? _estLinhaConcluida(ultima) : false;
+      anteriorConcluida = ultima ? _estLinhaConcluida(p, ultima) : false;
     }
     return cur;
   }
@@ -10395,7 +10405,23 @@ function etapaAutoDe(p){
 function _esteiraAlimentarDoCronograma(p){
   if(!p||!Array.isArray(p.previstoLinhas)) return false;
   const primeiroSlot=(eid)=>{ let m=null; p.previstoLinhas.forEach(l=>{ const a=atividadeObj(l.atv); if(!a||a.etapa!==eid||!l.ini)return; if(!m||l.ini<m.ini)m=l; }); return m; };
-  const realData=(eid)=>{ let r=""; p.previstoLinhas.forEach(l=>{ const a=atividadeObj(l.atv); if(!a||a.etapa!==eid)return; _tarefasLinha(l).forEach(t=>{ if(t&&t.exec&&t.exec.status==="realizada"&&t.exec.iso&&(!r||t.exec.iso<r))r=t.exec.iso; }); }); return r; };
+  // Realizado mais antigo da etapa: por tarefa (t.exec) e, p/ linhas SEM tarefas, pela execução real do slot (gap B).
+  const realData=(eid)=>{
+    let r="";
+    p.previstoLinhas.forEach(l=>{
+      const a=atividadeObj(l.atv); if(!a||a.etapa!==eid)return;
+      const ts=_tarefasLinha(l);
+      if(ts.length){ ts.forEach(t=>{ if(t&&t.exec&&t.exec.status==="realizada"&&t.exec.iso&&(!r||t.exec.iso<r))r=t.exec.iso; }); }
+      else{ _pvExpandir(l).forEach(c=>{ if(_celRealizadaProj(c.k, p.nome) && (!r||c.iso<r)) r=c.iso; }); }
+    });
+    return r;
+  };
+  // Proveniência por VALOR (campo → valor que a automação gravou por último). Permite limpar
+  // datas que vieram do cronograma quando a atividade é removida (gap A), SEM apagar datas
+  // manuais: só limpa se o valor atual ainda for exatamente o que a automação escreveu.
+  const prov = (p._estCrono && typeof p._estCrono==="object") ? p._estCrono : {};
+  const novo = {};
+  const setAuto=(field,val)=>{ p[field]=val; novo[field]=val; };
   ETAPAS.forEach(e=>{
     if(e.id==="discovery"){ if(p.dtRecebimento) p.dtDiscovery=p.dtRecebimento; return; }
     if(e.id==="golive"){
@@ -10403,15 +10429,21 @@ function _esteiraAlimentarDoCronograma(p){
       if(gl){
         const bl=_baselineLinhaPorId(p, gl.id);
         const prevIni=(bl&&bl.ini)?bl.ini:gl.ini;
-        if(prevIni) p.goLivePrevisto=prevIni;
-        p.goLiveAjustado=(bl&&bl.ini&&gl.ini&&bl.ini!==gl.ini)?gl.ini:"";
+        if(prevIni) setAuto("goLivePrevisto", prevIni);
+        const aju=(bl&&bl.ini&&gl.ini&&bl.ini!==gl.ini)?gl.ini:"";
+        p.goLiveAjustado=aju; if(aju) novo["goLiveAjustado"]=aju;
       }
-      const rg=realData("golive"); if(rg) p.goLiveRealizado=rg;
+      const rg=realData("golive"); if(rg) setAuto("goLiveRealizado", rg);
       return;
     }
     const s=primeiroSlot(e.id);
-    if(s&&s.ini) p[e.field]=s.ini;       // E1: sobrescreve onde o cronograma cobre a etapa
+    if(s&&s.ini) setAuto(e.field, s.ini);   // E1: sobrescreve onde o cronograma cobre a etapa
   });
+  // gap A — limpa o que era do cronograma e não tem mais atividade nesta passada (valor intacto).
+  Object.keys(prov).forEach(field=>{
+    if(!(field in novo) && p[field] && p[field]===prov[field]) p[field]="";
+  });
+  p._estCrono = novo;
   return true;
 }
 // Etapa efetiva: override manual (p.etapaAtual) tem prioridade; senão, automática.
@@ -10463,8 +10495,12 @@ function aplicarFiltroEsteira(){
   if(!estPeriodoDe || !estPeriodoAte){ alert("Por favor, selecione as datas de início e fim da Esteira."); return; }
   if(estPeriodoDe > estPeriodoAte){ alert("A data inicial não pode ser maior que a data final."); return; }
   estFiltroAplicado = true;
-  try{ _estPrefillRealizado(); }catch(e){ console.warn("[esteira] prefill:",e); }
-  renderEsteira();
+  // C — garante histórico completo antes do prefill (e do realizado-por-célula do gap B/etapaAutoDe).
+  const _eb=el("estBody"); if(_eb && ALLOC_WINDOWED_READ && !_histCompleto) _eb.innerHTML=`<div class="loading">Carregando histórico completo da Esteira…</div>`;
+  _garantirHistoricoCompleto().then(()=>{
+    try{ _estPrefillRealizado(); }catch(e){ console.warn("[esteira] prefill:",e); }
+    renderEsteira();
+  });
 }
 
 function esteiraFiltrados(){
@@ -10586,6 +10622,9 @@ function renderEsteiraTabela(){
    roda na abertura da Esteira e ao renderizar a Tabela; só persiste quando muda algo.
    Obs.: respeita a janela de leitura — etapas fora dos meses carregados preenchem ao carregar. */
 function _estPrefillRealizado(){
+  // C — nunca rodar com DATA parcial (modo janela): a "data mais antiga por etapa" sairia
+  // truncada na janela e, como só preenche campo vazio, ficaria gravada sem chance de correção.
+  if(ALLOC_WINDOWED_READ && !_histCompleto) return 0;
   const atvEtapa={}; (REG.atividades||[]).forEach(a=>{ if(a.etapa) atvEtapa[a.nome]=a.etapa; });
   if(!Object.keys(atvEtapa).length) return 0;
   const realPE={};
