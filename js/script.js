@@ -1695,7 +1695,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.88.4";
+const APP_VERSION = "1.90.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -3011,15 +3011,40 @@ function openAlloc(nomeOuIso,isoOuSlot,slotOuUndef){
   if(!nome)return;
   const podeEditar=canEditAlloc(nome,iso);
   const r=DATA[key(nome,iso,slot)];
+  const prev=PREV[key(nome,iso,slot)]||null;   // previsto (planejado) — exibido quando NÃO há realizado
   const d=parseISO(iso);
   el("mTitle").innerHTML=`<i data-lucide="info"></i>${enc(nome)} · ${enc(slot)}`;
   const subBase=DOW[d.getDay()]+", "+fmtDM(d)+"/"+d.getFullYear()+" · "+(SLOTS.find(s=>s.id===slot)||{}).time;
   el("mSub").textContent=subBase;
   const body=el("consultBody");
   if(!r){
-    body.innerHTML=`<div class="rep-empty" style="padding:30px 10px;background:var(--paper);border-radius:var(--r-md)">
-      <i data-lucide="circle-dashed" style="width:32px;height:32px;color:var(--faint);margin-bottom:8px"></i><br>
-      <b>Slot livre</b><br><span style="font-size:12.5px;color:var(--muted)">Nenhuma alocação registrada</span></div>`;
+    if(prev){
+      // Slot PREVISTO (planejado pelo cronograma, ainda não realizado)
+      const venc = iso < toISO(new Date());
+      const cliP=(prev.cliente && prev.cliente!=="Livre")?prev.cliente:"—";
+      const projCadP = cliP!=="—" ? REG.projetos.find(x=>x.nome===cliP) : null;
+      const gpP = projCadP && projCadP.gp ? String(projCadP.gp) : "";
+      const liderP = projCadP && projCadP.lider ? String(projCadP.lider) : "";
+      const ativP=atividadeObj(prev.atividade);
+      const tipoP=ativP?TIPO_LABEL(ativP.tipo):"—";
+      const tarefasP=_tarefasSlotMarcaveisHTML(cliP, nome, slot, iso);
+      const gpLiderP = projCadP ? `
+        <div class="cs-it cs-full cs-person"><div class="cs-l">Gerente de Projeto</div><div class="cs-v" style="${gpP?"":"color:var(--faint);font-style:italic"}">${gpP?enc(gpP):"— (não definido)"}</div></div>
+        <div class="cs-it cs-full cs-person"><div class="cs-l">Líder de Projeto</div><div class="cs-v" style="${liderP?"":"color:var(--faint);font-style:italic"}">${liderP?enc(liderP):"— (não definido)"}</div></div>` : "";
+      body.innerHTML=`
+        <div style="background:#eef2ff;border:1px solid #c7d2fe;color:#3730a3;padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:10px">
+          <b>◔ Previsto</b> — planejado pelo cronograma, ainda <b>não realizado</b>.${venc?' <span style="color:#b07a1e;font-weight:600">⚠ vencido (data já passou)</span>':""}
+        </div>
+        <div class="cs-grid">
+          <div class="cs-it"><div class="cs-l">Atividade</div><div class="cs-v"><b>${enc(prev.atividade||"—")}</b>${tipoP!=="—"?` <span class="badge-small" style="background:#fff;border:1px solid var(--line2)">${enc(tipoP)}</span>`:""}</div></div>
+          <div class="cs-it"><div class="cs-l">Projeto / Cliente</div><div class="cs-v">${enc(cliP)}</div></div>${gpLiderP}
+          ${tarefasP}
+        </div>`;
+    }else{
+      body.innerHTML=`<div class="rep-empty" style="padding:30px 10px;background:var(--paper);border-radius:var(--r-md)">
+        <i data-lucide="circle-dashed" style="width:32px;height:32px;color:var(--faint);margin-bottom:8px"></i><br>
+        <b>Slot livre</b><br><span style="font-size:12.5px;color:var(--muted)">Nenhuma alocação registrada</span></div>`;
+    }
   }else{
     const ativ=atividadeObj(r.atividade);
     const tipo=ativ?TIPO_LABEL(ativ.tipo):"—";
@@ -3037,8 +3062,7 @@ function openAlloc(nomeOuIso,isoOuSlot,slotOuUndef){
     const obsAud=(r.obsBy||r.obsAt)?`<div class="hint" style="margin-top:6px;font-size:11px">Última alteração da observação por <b>${enc(r.obsBy||"—")}</b> em ${enc((r.obsAt||"").replace("T"," ").slice(0,16))}</div>`:"";
     const pend=r.obsPendente?`<div style="background:#f6ecd6;border:1px solid #e6d2a6;color:#b07a1e;padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:8px"><b>⚠ Observação pendente</b> — atividade exige observação, ainda sem texto.</div>`:"";
     const fer=r.feriado?`<div style="background:var(--aus-bg);border:1px solid var(--aus-bd);color:#4a4a4a;padding:8px 10px;border-radius:8px;font-size:12px;margin-bottom:8px">🌴 Slot criado pela <b>propagação automática de feriado</b>.</div>`:"";
-    const tprev=_tarefasPrevistasNoSlot(cli, nome, slot, iso);   // tarefas do dia (derivado do cronograma · só na consulta)
-    const tarefasHTML=tprev.length?`<div class="cs-it cs-full"><div class="cs-l">Tarefas previstas neste dia</div><div class="cs-v cs-tarefas">${tprev.map(x=>`<span class="cs-tar">${enc(x)}</span>`).join("")}</div></div>`:"";
+    const tarefasHTML=_tarefasSlotMarcaveisHTML(cli, nome, slot, iso);   // tarefas do dia com status (marcáveis)
     body.innerHTML=`${fer}${pend}
       <div class="cs-grid">
         <div class="cs-it"><div class="cs-l">Atividade</div><div class="cs-v"><b>${enc(r.atividade||"—")}</b>${tipo!=="—"?` <span class="badge-small" style="background:#fff;border:1px solid var(--line2)">${tipoIcone} ${enc(tipo)}</span>`:""}</div></div>
@@ -3053,7 +3077,7 @@ function openAlloc(nomeOuIso,isoOuSlot,slotOuUndef){
   const bloqueadoPorDeslig = corteDeslig && iso>=corteDeslig;
   const podeAlterar = canIncluirAlocacao() && !bloqueadoPorDeslig;
   el("mAlterar").style.display = podeAlterar ? "" : "none";
-  el("mAlterar").onclick = ()=>{closeAlloc(); openIncluirAloc({analista:nome, iso, slot, prefill:r||null});};
+  el("mAlterar").onclick = ()=>{closeAlloc(); openIncluirAloc({analista:nome, iso, slot, prefill:r||prev||null});};
   // "Liberar slot": só aparece quando há algo lançado E o usuário pode alterar.
   // Devolve o slot para "Livre" removendo o registro (apagar a chave = ausência = livre).
   el("mLiberar").style.display = (podeAlterar && r) ? "" : "none";
@@ -3081,6 +3105,7 @@ function openAlloc(nomeOuIso,isoOuSlot,slotOuUndef){
     }
   }
   el("overlay").classList.add("open");
+  _bindTarefasSlot(nome, iso, slot);
   lucideRefresh();
 }
 function closeAlloc(){el("overlay").classList.remove("open");}
@@ -4903,7 +4928,7 @@ function _tarefasOrdenadas(l){
   const out=[], seen=new Set();
   // mantém tarefas do catálogo E as incluídas manualmente no projeto (manual:true), mesmo que
   // não estejam no catálogo da atividade — permite "incluir tarefa avulsa" por projeto.
-  stored.forEach(s=>{ if(s&&(catNomes.has(s.nome)||s.manual)&&!seen.has(s.nome)){ if(!s.manual && ocultas.has(s.nome)){ seen.add(s.nome); return; } const o={nome:s.nome, ini:s.ini||"", fim:s.fim||""}; if(s.manual)o.manual=true; out.push(o); seen.add(s.nome); } });
+  stored.forEach(s=>{ if(s&&(catNomes.has(s.nome)||s.manual)&&!seen.has(s.nome)){ if(!s.manual && ocultas.has(s.nome)){ seen.add(s.nome); return; } const o={nome:s.nome, ini:s.ini||"", fim:s.fim||""}; if(s.manual)o.manual=true; if(s.exec)o.exec=s.exec; out.push(o); seen.add(s.nome); } });
   cat.forEach(t=>{ if(!seen.has(t.nome) && !ocultas.has(t.nome)){ out.push({nome:t.nome, ini:"", fim:""}); seen.add(t.nome); } });
   return out;
 }
@@ -4917,7 +4942,7 @@ function _tarefasLinha(l){
     const ini=clamp(rawIni), fim=clamp(rawFim);
     const foraJanela=!!((rawIni&&rawIni!==ini)||(rawFim&&rawFim!==fim)||(ini&&fim&&ini>fim));
     const complete=!!(ini&&fim&&ini<=fim);
-    return {nome:s.nome, num:j+1, ini, fim, complete, foraJanela, manual:!!s.manual};
+    return {nome:s.nome, num:j+1, ini, fim, complete, foraJanela, manual:!!s.manual, exec:s.exec||null};
   });
 }
 // Materializa l.tarefas como a lista ORDENADA completa (preserva datas). Usado antes de
@@ -5035,6 +5060,86 @@ function _tarefasPrevistasNoSlot(cli, nome, slot, iso){
   return out;
 }
 
+// Versão detalhada das tarefas previstas de um slot/dia (com referência à linha e status de execução).
+function _tarefasPrevistasNoSlotDet(cli, nome, slot, iso){
+  if(!cli||cli==="—")return [];
+  const p=(REG.projetos||[]).find(x=>x&&x.nome===cli);
+  if(!p||!Array.isArray(p.previstoLinhas))return [];
+  const out=[];
+  p.previstoLinhas.forEach((l,idx)=>{
+    if(l.an!==nome||l.slot!==slot)return;
+    if(!(l.ini&&l.fim&&iso>=l.ini&&iso<=l.fim))return;
+    _tarefasLinha(l).forEach(t=>{ if(t.complete&&iso>=t.ini&&iso<=t.fim) out.push({lineId:l.id, atv:l.atv, nome:t.nome, label:`${idx+1}.${t.num} ${t.nome}`, exec:t.exec||null}); });
+  });
+  return out;
+}
+
+// Marca uma tarefa do cronograma como realizada / não realizada (status por tarefa · M1/M3).
+// "realizada" também CONFIRMA o realizado do slot (M2 · opção 1): grava DATA do mesmo projeto,
+// sem sobrescrever realizado de outro projeto. "nao" só registra o status. ""=limpa.
+function _marcarTarefaExec(cli, lineId, tarefaNome, status, an, iso, slot){
+  if(!canIncluirAlocacao()){ alert("Você não tem permissão para confirmar realizado."); return false; }
+  const p=(REG.projetos||[]).find(x=>x&&x.nome===cli); if(!p){ alert("Projeto não encontrado."); return false; }
+  const l=(p.previstoLinhas||[]).find(x=>x&&x.id===lineId); if(!l){ alert("Atividade não encontrada."); return false; }
+  _materializarTarefas(l);                                  // garante entrada p/ tarefa de catálogo
+  const t=(l.tarefas||[]).find(x=>x&&x.nome===tarefaNome); if(!t){ alert("Tarefa não encontrada."); return false; }
+  const agora=new Date().toISOString(), who=(_currentUser&&_currentUser.email)||"local";
+  if(status==="realizada"){
+    const real=DATA[key(an,iso,slot)];
+    if(real && _normProj(real.cliente)!==_normProj(cli)){
+      alert("Este slot já tem realizado de outro projeto ("+real.cliente+"). A tarefa não foi confirmada.");
+      return false;
+    }
+    DATA[key(an,iso,slot)]={cliente:cli, atividade:l.atv};   // confirma o realizado do slot
+    t.exec={status:"realizada", em:agora, por:who, iso};
+    saveAlloc();
+  }else if(status==="nao"){
+    t.exec={status:"nao", em:agora, por:who, iso};
+  }else{
+    delete t.exec;
+  }
+  saveReg();
+  return true;
+}
+
+// HTML da seção "Tarefas previstas neste dia" com status e botões (Realizada/Não) no painel do slot.
+function _tarefasSlotMarcaveisHTML(cli, nome, slot, iso){
+  const dets=_tarefasPrevistasNoSlotDet(cli, nome, slot, iso);
+  if(!dets.length) return "";
+  const pode=canIncluirAlocacao();
+  const rowS="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:5px 0;border-bottom:1px solid var(--line2)";
+  const linhas=dets.map(d=>{
+    const st=d.exec&&d.exec.status;
+    const badge = st==="realizada"?'<span style="color:#2e7d32;font-weight:600;font-size:12px">✓ realizada</span>'
+                : st==="nao"?'<span style="color:#b07a1e;font-weight:600;font-size:12px">✗ não realizada</span>'
+                : '<span style="color:var(--muted);font-size:12px">pendente</span>';
+    const btns = pode?`<span style="margin-left:auto;display:flex;gap:6px">
+        <button class="cs-tar-do" data-cli="${enc(cli)}" data-lid="${enc(d.lineId)}" data-tn="${enc(d.nome)}" data-an="${enc(nome)}" data-iso="${enc(iso)}" data-slot="${enc(slot)}" style="font-size:11.5px;padding:3px 8px;border:1px solid #bfe3c4;background:#eaf7ec;color:#2e7d32;border-radius:6px;cursor:pointer">Realizada</button>
+        <button class="cs-tar-no" data-cli="${enc(cli)}" data-lid="${enc(d.lineId)}" data-tn="${enc(d.nome)}" data-an="${enc(nome)}" data-iso="${enc(iso)}" data-slot="${enc(slot)}" style="font-size:11.5px;padding:3px 8px;border:1px solid #e6d2a6;background:#f6ecd6;color:#b07a1e;border-radius:6px;cursor:pointer">Não</button>
+      </span>`:"";
+    return `<div style="${rowS}"><span style="font-size:12.5px">${enc(d.label)}</span> ${badge}${btns}</div>`;
+  }).join("");
+  return `<div class="cs-it cs-full"><div class="cs-l">Tarefas previstas neste dia</div><div class="cs-v">${linhas}</div></div>`;
+}
+function _bindTarefasSlot(nome, iso, slot){
+  document.querySelectorAll(".cs-tar-do,.cs-tar-no").forEach(b=>{
+    b.addEventListener("click",()=>{
+      const status=b.classList.contains("cs-tar-do")?"realizada":"nao";
+      if(_marcarTarefaExec(b.dataset.cli, b.dataset.lid, b.dataset.tn, status, b.dataset.an, b.dataset.iso, b.dataset.slot)){
+        renderAll();
+        openAlloc(nome, iso, slot);   // re-render do painel com o status atualizado
+      }
+    });
+  });
+}
+
+function _execBadge(exec){
+  const st=exec&&exec.status;
+  if(st==="realizada") return '<span style="color:#2e7d32;font-weight:700;margin-left:4px" title="Tarefa realizada">✓</span>';
+  if(st==="nao") return '<span style="color:#b07a1e;font-weight:700;margin-left:4px" title="Tarefa não realizada">✗</span>';
+  return "";
+}
+
 function _renderPrevLinhas(){
   const host=el("pvLinhas"); if(!host)return;
   const resumo=el("pvResumo"), warn=el("pvWarn");
@@ -5070,7 +5175,7 @@ function _renderPrevLinhas(){
           return `<div class="pvt-row${t.complete?"":" pvt-inc"}">
             <div class="pvt-top"><span class="pvt-num">${idx+1}.${t.num}</span>
               <span class="pvt-move"><button class="pvt-up" data-li="${idx}" data-tn="${enc(t.nome)}" title="Subir"${tj===0?" disabled":""}>↑</button><button class="pvt-dn" data-li="${idx}" data-tn="${enc(t.nome)}" title="Descer"${tj===tl.length-1?" disabled":""}>↓</button></span>
-              <span class="pvt-nm" title="${enc(t.nome)}">${enc(t.nome)}</span>${flag}${t.manual?`<span class="pvt-tagm" title="Tarefa incluída neste projeto (não vem do catálogo)">avulsa</span>`:""}<button class="pvt-del" data-li="${idx}" data-tn="${enc(t.nome)}" title="${t.manual?'Remover tarefa avulsa':'Remover tarefa do catálogo (oculta neste projeto · reinclua para trazer de volta)'}">×</button></div>
+              <span class="pvt-nm" title="${enc(t.nome)}">${enc(t.nome)}</span>${_execBadge(t.exec)}${flag}${t.manual?`<span class="pvt-tagm" title="Tarefa incluída neste projeto (não vem do catálogo)">avulsa</span>`:""}<button class="pvt-del" data-li="${idx}" data-tn="${enc(t.nome)}" title="${t.manual?'Remover tarefa avulsa':'Remover tarefa do catálogo (oculta neste projeto · reinclua para trazer de volta)'}">×</button></div>
             <div class="pvt-dates">
               <label class="pvt-dt"><span>Início</span><input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||'')}" max="${enc(l.fim||'')}"></label>
               <span class="pvt-arr">→</span>
@@ -5079,7 +5184,7 @@ function _renderPrevLinhas(){
           </div>`;
         }
         const dt=t.complete?`${fmtDM(parseISO(t.ini))}→${fmtDM(parseISO(t.fim))}`:"sem data";
-        return `<div class="pvt-row pvt-ro"><span class="pvt-num">${idx+1}.${t.num}</span><span class="pvt-nm">${enc(t.nome)}</span><span class="pvt-dtxt">${dt}</span>${flag}</div>`;
+        return `<div class="pvt-row pvt-ro"><span class="pvt-num">${idx+1}.${t.num}</span><span class="pvt-nm">${enc(t.nome)}</span>${_execBadge(t.exec)}<span class="pvt-dtxt">${dt}</span>${flag}</div>`;
       }).join("");
       const distBtn=(podeEdT&&l.ini&&l.fim)?`<button class="pvt-dist" data-li="${idx}" title="Espalha as tarefas, na ordem, pelos dias úteis da atividade"><i data-lucide="wand-2"></i> Distribuir no período</button>`:"";
       subHTML=`<div class="pvx-tarefas"><div class="pvt-h"><i data-lucide="list-checks"></i> Tarefas <span class="pvt-hint">· ordene com ↑↓ · 1ª inicia no começo da atividade · dentro de ${enc(l.ini||'?')}–${enc(l.fim||'?')}</span>${distBtn}</div>${linhasT}</div>`;
@@ -5099,7 +5204,7 @@ function _renderPrevLinhas(){
       <div class="${autoCls}"><input type="date" value="${enc(l.ini||'')}" data-idx="${idx}" class="pvx-ini" title="${l.iniManual?'Início manual (trava o encadeamento). Limpe para re-encadear.':'Início automático (encadeado). Preencha para travar.'}"></div>
       <div class="${autoFimCls}"><input type="date" value="${enc(l.fim||'')}" min="${enc(l.ini||'')}" data-idx="${idx}" class="pvx-fim" title="${l.fimManual?'Término manual (ajustado). Limpe para voltar à duração da atividade.':'Término automático (duração da atividade). Edite para ajustar os slots reais.'}"></div>
       <div>${l.slots||0}</div>
-      <div class="pvx-move"><button class="pvx-up" data-id="${enc(l.id)}" title="Subir">↑</button><button class="pvx-dn" data-id="${enc(l.id)}" title="Descer">↓</button></div>
+      <div class="pvx-move"><button class="pvx-up" data-id="${enc(l.id)}" title="Subir">↑</button><button class="pvx-dn" data-id="${enc(l.id)}" title="Descer">↓</button><button class="pvx-up pvx-reag" data-id="${enc(l.id)}" title="Reagendar a partir desta atividade (cascata)">⟳</button></div>
       <button class="pvx-del" data-id="${enc(l.id)}">Remover</button>
     </div>${subHTML}`;
   }).join("");
@@ -5109,6 +5214,7 @@ function _renderPrevLinhas(){
   host.querySelectorAll(".pvx-del").forEach(b=>b.addEventListener("click",()=>_pvRemoverLinha(b.dataset.id)));
   host.querySelectorAll(".pvx-up").forEach(b=>b.addEventListener("click",()=>_pvMover(b.dataset.id,-1)));
   host.querySelectorAll(".pvx-dn").forEach(b=>b.addEventListener("click",()=>_pvMover(b.dataset.id,1)));
+  host.querySelectorAll(".pvx-reag").forEach(b=>b.addEventListener("click",()=>_pvAbrirReagendar(b.dataset.id)));
   host.querySelectorAll(".pvx-an").forEach(s=>s.addEventListener("change",()=>_pvSetLinhaCampo(s.dataset.id,"an",s.value)));
   host.querySelectorAll(".pvx-slot").forEach(s=>s.addEventListener("change",()=>_pvSetLinhaCampo(s.dataset.id,"slot",s.value)));
   host.querySelectorAll(".pvx-ini").forEach(inp=>inp.addEventListener("change",()=>_pvSetIni(+inp.dataset.idx,inp.value)));
@@ -5310,6 +5416,66 @@ function _pvRenderWarn(p){ const warn=el("pvWarn"); if(!warn)return; const o=_pr
 // APLICAR: grava previsto (PREV) + realizado nos livres (DATA), reconciliando o previsto
 // de ORIGEM deste projeto (cria os novos, remove os que saíram da sequência). Previsto
 // manual e de outros projetos é preservado; realizado editado à mão é preservado.
+/* ===================== REAGENDAMENTO EM CASCATA (DR1–DR6) =====================
+   Reagenda o cronograma a partir de UMA atividade (ponto de corte) para uma nova data de retomada,
+   empurrando em cascata as atividades seguintes (dias úteis). O que está ANTES do corte (já
+   realizado/concluído) é travado e não se move. O previsto ORIGINAL fica guardado na baseline
+   (congelada na 1ª vez); o cronograma compara original × reagendado. Ao final, o previsto dos slots
+   é reaplicado (PREV reconciliado; realizado/DATA intacto). */
+function _pvReagendar(p, lineId, novaDataISO){
+  if(!p||!canEditAction("cronograma")) return false;
+  const L=p.previstoLinhas||[];
+  const corte=L.findIndex(l=>l&&l.id===lineId);
+  if(corte<0){ alert("Atividade não encontrada para reagendar."); return false; }
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(novaDataISO||"")){ alert("Data de retomada inválida."); return false; }
+
+  // DR4: garante a baseline (previsto original) antes do 1º reagendamento.
+  const temBase = p.baselineCronograma && Array.isArray(p.baselineCronograma.linhas) && p.baselineCronograma.linhas.length;
+  if(!temBase) _pvCongelarBaseline(p, "Previsto original");
+
+  // DR5: ANTES do corte = travado (não se move); corte = nova data; CAUDA = destravada p/ re-encadear.
+  L.forEach((l,i)=>{
+    if(i<corte){ if(l.ini) l.iniManual=true; }                 // congela o que já passou/realizou
+    else if(i===corte){ l.ini=novaDataISO; l.iniManual=true; } // ponto de retomada
+    else { l.iniManual=false; }                                // cauda encadeia em cascata
+  });
+  _pvRecalcChain(p);
+  p.previstoAplicadoEm="";
+  // DR6: re-aplica o previsto nos slots (reconcilia PREV; realizado intacto). _pvAplicar recalc+salva.
+  _pvAplicar(p);
+  return true;
+}
+
+function _pvAbrirReagendar(lineId){
+  if(!canEditAction("cronograma")){ alert("Sem permissão de edição no Cronograma."); return; }
+  const p=_pvLiveProj(); if(!p){ alert("Projeto inválido."); return; }
+  const L=p.previstoLinhas||[];
+  const idx=L.findIndex(x=>x&&x.id===lineId);
+  const l=L[idx]; if(!l){ alert("Atividade não encontrada."); return; }
+  const nSeguintes=L.length-idx-1;
+  const old=el("reagOverlay"); if(old)old.remove();
+  const ov=document.createElement("div"); ov.id="reagOverlay"; ov.className="imp-overlay";
+  ov.innerHTML=`<div class="imp-modal">
+    <div class="imp-head"><div><b>Reagendar a partir desta atividade</b><div class="imp-sub">${enc(p.nome)} · <b>${enc(l.atv)}</b> · início atual: ${enc(l.ini||"—")}</div></div><button class="imp-x" id="reagClose">×</button></div>
+    <div class="imp-body">
+      <div class="imp-row"><label>Nova data de retomada<br><input type="date" id="reagData" value="${enc(l.ini||"")}"></label></div>
+      <div class="imp-warn">Esta atividade e as <b>${nSeguintes}</b> seguintes serão empurradas em cascata (dias úteis). As atividades anteriores (já realizadas) <b>não se movem</b>. O previsto original é guardado na baseline e o previsto dos slots é reaplicado. <b>Ação irreversível pela tela</b> (use a baseline como referência).</div>
+    </div>
+    <div class="imp-foot"><button class="btn" id="reagCancel">Cancelar</button><button class="btn primary" id="reagDo"><i data-lucide="calendar-clock"></i> Reagendar</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  el("reagClose").onclick=close; el("reagCancel").onclick=close;
+  ov.addEventListener("click",e=>{ if(e.target===ov)close(); });
+  el("reagDo").addEventListener("click",()=>{
+    const d=(el("reagData").value||"").trim();
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(d)){ alert("Informe a nova data de retomada."); return; }
+    close();
+    _pvReagendar(p, lineId, d);
+  });
+  lucideRefresh();
+}
+
 function _pvAplicar(p){
   if(!p){ p=_pvProj; }
   if(!canEditAction("cronograma")){ alert("Você não tem permissão de edição no Cronograma de Projetos."); return; }
