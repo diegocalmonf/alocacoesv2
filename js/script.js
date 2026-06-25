@@ -1682,7 +1682,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.94.0";
+const APP_VERSION = "1.95.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -1826,6 +1826,21 @@ function _renomearAtasDoAnalista(old,nv){
   }).catch(()=>{});
 }
 
+/* ===================== CONFIGURAÇÕES DO SISTEMA (parâmetros globais) =====================
+   Parâmetros que ditam o funcionamento do sistema. Guardados em REG.config e
+   persistidos pelo choke-point saveReg() — sincronizam entre abas pelo listener
+   vivo de /reg. Tela autocontida em #actBody (molde de "usuarios"/checklist), só admin.
+   Primeiro parâmetro: data de início do controle de atas (corte INCLUSIVO).        */
+function _cfg(){ REG.config = REG.config || {}; return REG.config; }
+function _cfgAtas(){ const c=_cfg(); c.atas = c.atas || {}; return c.atas; }
+// Data (ISO AAAA-MM-DD) a partir da qual o controle de atas passa a valer.
+// "" (vazio) = sem corte → comportamento atual (todo o histórico é exigido).
+function cfgAtasInicioControle(){ const v=_cfgAtas().inicioControle; return (typeof v==="string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) ? v : ""; }
+// Predicado único do corte. Regra INCLUSIVA: a data parametrizada conta.
+// Slots ANTERIORES ao corte ficam de fora (não validados, sem pendência, fora do BI).
+// iso ausente → tratado como dentro do controle (não some por falta de data).
+function ataSobControle(iso){ const c=cfgAtasInicioControle(); if(!c) return true; if(!iso) return true; return String(iso) >= c; }
+
 /* ===================== render grade ===================== */
 // Monta o HTML de um chip de alocação, com ícone/tooltip de observação se houver
 // Indicador de ata no chip do slot (grade). Só aparece quando a atividade exige ata.
@@ -1842,6 +1857,9 @@ function _ataIndicadorHTML(slotKey, r){
     const lbl = {gerada:"Ata gerada",impressa:"Ata impressa (bloqueada)",enviada:"Ata enviada"}[st]||"Ata emitida";
     return `<span class="ata-ind emitida" title="${lbl}">${svg('<path d="m9 15 2 2 4-4"/>')}</span>`;
   }
+  // Corte de controle de atas: slots ANTERIORES ao parâmetro não cobram pendência.
+  const _isoCtl = slotKey ? String(slotKey).split("__")[1] : "";
+  if(!ataSobControle(_isoCtl)) return "";
   return `<span class="ata-ind pendente" title="Ata pendente (obrigatória)">${svg()}</span>`;
 }
 function chipHTML(cat,r,classe,slotKey){
@@ -3522,6 +3540,10 @@ function _montarLinhasAtas(aloc, atas){
     const atv=atividadeObj(r.atividade);
     if(!(atv&&atv.exigeAta))return;                       // só slots que exigem ata
     const p=k.split("__"); const analista=p[0], iso=p[1], slot=p[2];
+    // Corte de controle de atas: datas ANTERIORES ao parâmetro não são exigidas.
+    // NÃO marca usados[k]: se houver ata gerada antes do corte, ela ainda aparece
+    // como "extra" (não-obrigatória) no laço de atas órfãs abaixo. (decisão 4b)
+    if(!ataSobControle(iso)) return;
     const cliente=(r.cliente&&r.cliente!=="Livre")?r.cliente:"";
     const proj=cliente?REG.projetos.find(x=>x.nome===cliente):null;
     const gp=proj&&proj.gp?proj.gp:"";
@@ -3993,6 +4015,10 @@ function _carregarCadastroTipo(tab){
     // A auditoria já possui leitura própria paginada/limitada; não força histórico de alocações.
     _cadastrosCarregados[tab]=true; return Promise.resolve();
   }
+  if(tab==="configuracoes"){
+    // Configurações vivem em REG.config — já carregadas pelo listener vivo de /reg. Nada a buscar.
+    _cadastrosCarregados[tab]=true; return Promise.resolve();
+  }
   const k=_regKeyPorCadastro(tab);
   if(!k || !_db){ _cadastrosCarregados[tab]=true; return Promise.resolve(); }
   // Flush de gravação pendente ANTES de reler o reg — senão este read pode sobrescrever
@@ -4016,6 +4042,7 @@ function renderCadastroHome(){
     ["feriados","Feriados","calendar-x","Calendário usado nas regras de dias úteis"],
   ];
   if(canViewUsers()) cards.push(["usuarios","Usuários","shield","Usuários e permissões por ação"]);
+  if(isAdmin()) cards.push(["configuracoes","Configurações","sliders-horizontal","Parâmetros que regem o funcionamento do sistema"]);
   if(isAdmin()) cards.push(["importar","Importar","upload","Importação de dados"]);
   if(isAdmin()) cards.push(["auditoria","Auditoria","history","Eventos recentes do sistema"]);
   b.innerHTML=`<div class="rep-empty" style="text-align:left"><b>Escolha um tipo de cadastro.</b><br>Nenhum cadastro é buscado ao abrir esta tela. O sistema consulta somente o tipo selecionado.</div>
@@ -4049,6 +4076,7 @@ function renderTabs(){
   // Sessão Admin (condicional)
   const admin=[];
   if(canViewUsers())admin.push(["usuarios","Usuários","shield",Object.keys(_usersCache).length]);
+  if(isAdmin())admin.push(["configuracoes","Configurações","sliders-horizontal",""]);
   if(isAdmin())admin.push(["importar","Importar","upload","" ]);
   if(isAdmin())admin.push(["auditoria","Auditoria","history",""]);
   if(admin.length)grupos.push({label:"Administração", abas:admin});
@@ -4623,7 +4651,64 @@ function renderChecklistCadastro(){
   lucideRefresh();
 }
 
-function renderActions(){renderTabs();lucideRefresh();if(actTab!=="checklistTipos")_cklDraft=null;if(!actTab){renderCadastroHome();return;}if(actTab==="checklistTipos"){renderChecklistCadastro();return;}if(actTab==="usuarios"){renderUsers();return;}if(actTab==="importar"){renderImporter();return;}if(actTab==="auditoria"){renderAuditoria();return;}if(actEditing){renderForm();}else{renderList();}}
+/* ===================== CONFIGURAÇÕES · TELA (autocontida, só admin) =====================
+   Molde de "usuarios"/checklist: desenha a própria UI em #actBody. Edição gravada
+   pelo choke-point saveReg(); histórico via audit(). Gate: isAdmin(). */
+function _cfgFmtDataLonga(iso){ if(!iso) return ""; try{ const d=parseISO(iso); return fmtDM(d)+"/"+d.getFullYear(); }catch(e){ return iso; } }
+function renderConfiguracoes(){
+  const b=el("actBody"); if(!b) return;
+  if(!isAdmin()){ b.innerHTML=`<div class="rep-empty" style="padding:30px">Apenas administradores acessam as Configurações.</div>`; return; }
+  const atasIni=cfgAtasInicioControle();
+  const resumoAtas = atasIni
+    ? `Controle ativo a partir de <b>${enc(_cfgFmtDataLonga(atasIni))}</b> (data inclusiva). Atas de datas anteriores não são exigidas, não geram pendência e ficam fora dos relatórios e BI de atas.`
+    : `Sem data de corte — todo o histórico é exigido (comportamento padrão).`;
+  b.innerHTML=`
+    <div class="cfg-wrap" style="max-width:760px">
+      <div class="ckl-head"><div>
+        <div class="ckl-h-t">Configurações do sistema</div>
+        <div class="ckl-h-s">Parâmetros globais que regem o funcionamento do sistema. As alterações valem para todos os usuários.</div>
+      </div></div>
+
+      <div class="cfg-card" style="border:1px solid var(--line2);border-radius:14px;padding:18px;margin-top:14px;background:#fff">
+        <div class="kpi-group-title" style="margin:0 0 6px"><span class="ico">📋</span>Controle de Atas</div>
+        <div class="ckl-h-s" style="margin-bottom:14px">Data a partir da qual o controle de atas passa a valer. Slots com data <b>anterior</b> a esta não são validados, não geram pendência e não entram nos relatórios e BI de atas. A própria data informada já conta (inclusiva).</div>
+        <div style="display:flex;gap:12px;align-items:flex-end;flex-wrap:wrap">
+          <div class="f" style="min-width:220px">
+            <label>Início do controle de atas</label>
+            <input type="date" id="cfgAtasInicio" value="${enc(atasIni)}" style="width:100%;background:#fff;border:1px solid var(--line2);border-radius:10px;padding:10px 12px;font-size:13.5px;font-family:inherit">
+          </div>
+          <button class="btn primary" onclick="_cfgSalvarAtasInicio()"><i data-lucide="check"></i>Salvar</button>
+          ${atasIni?`<button class="btn" onclick="_cfgLimparAtasInicio()"><i data-lucide="x"></i>Remover corte</button>`:""}
+        </div>
+        <div class="cfg-resumo" style="margin-top:12px;font-size:12.5px;color:var(--muted)">${resumoAtas}</div>
+      </div>
+    </div>`;
+  lucideRefresh();
+}
+function _cfgSalvarAtasInicio(){
+  if(!isAdmin()){ alert("Apenas administradores alteram as Configurações."); return; }
+  const inp=el("cfgAtasInicio"); const v=inp?String(inp.value||"").trim():"";
+  if(v && !/^\d{4}-\d{2}-\d{2}$/.test(v)){ alert("Data inválida. Use o seletor de data."); return; }
+  const before=cfgAtasInicioControle();
+  if((v||"")===before){ renderConfiguracoes(); return; }
+  _cfgAtas().inicioControle = v || "";
+  saveReg();
+  try{ audit("config.atas.inicioControle", "Controle de Atas", {inicioControle:before}, {inicioControle:v||""}); }catch(e){}
+  try{ if(el("atasOverlay")&&el("atasOverlay").classList.contains("open")&&typeof renderAll==="function") renderAll(); }catch(e){}
+  renderConfiguracoes();
+}
+function _cfgLimparAtasInicio(){
+  if(!isAdmin()){ alert("Apenas administradores alteram as Configurações."); return; }
+  const before=cfgAtasInicioControle();
+  if(!before){ renderConfiguracoes(); return; }
+  if(!confirm("Remover a data de corte do controle de atas?\n\nVoltará a exigir atas de todo o histórico.")) return;
+  _cfgAtas().inicioControle = "";
+  saveReg();
+  try{ audit("config.atas.inicioControle", "Controle de Atas", {inicioControle:before}, {inicioControle:""}); }catch(e){}
+  renderConfiguracoes();
+}
+
+function renderActions(){renderTabs();lucideRefresh();if(actTab!=="checklistTipos")_cklDraft=null;if(!actTab){renderCadastroHome();return;}if(actTab==="checklistTipos"){renderChecklistCadastro();return;}if(actTab==="usuarios"){renderUsers();return;}if(actTab==="configuracoes"){renderConfiguracoes();return;}if(actTab==="importar"){renderImporter();return;}if(actTab==="auditoria"){renderAuditoria();return;}if(actEditing){renderForm();}else{renderList();}}
 
 function renderList(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer caminho */
   const b=el("actBody");
