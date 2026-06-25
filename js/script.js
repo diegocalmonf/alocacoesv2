@@ -1681,7 +1681,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.93.4";
+const APP_VERSION = "1.93.5";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -5660,6 +5660,11 @@ function _impAplicar(p, mapeado){
     else { if(m.ini)l.ini=m.ini; if(m.fim)l.fim=m.fim; l.iniManual=!!l.ini; l.fimManual=!!l.fim; l.origemImport=true; linAtual++; }
     l.tarefas=Array.isArray(l.tarefas)?l.tarefas:[];
     m.tarefas.forEach(t=>{ if(!t.nome)return; let s=l.tarefas.find(x=>x&&x.nome===t.nome); if(!s){ s={nome:t.nome, ini:"", fim:""}; l.tarefas.push(s); } if(t.ini)s.ini=t.ini; if(t.fim)s.fim=t.fim; });
+    // Atividade sem data própria no arquivo → herda o intervalo das suas tarefas (menor início, maior fim).
+    const _tIni=l.tarefas.map(s=>s.ini).filter(Boolean).sort();
+    const _tFim=l.tarefas.map(s=>s.fim||s.ini).filter(Boolean).sort();
+    if(!l.ini && _tIni.length){ l.ini=_tIni[0]; l.iniManual=true; }
+    if(!l.fim && _tFim.length){ l.fim=_tFim[_tFim.length-1]; l.fimManual=true; }
   });
   _pvRecalcChain(p); saveReg();
   return {atividades:mapeado.length, atvCriadas, atvCasadas, tarCriadas, linNovas, linAtual};
