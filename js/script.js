@@ -1695,7 +1695,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.91.1";
+const APP_VERSION = "1.91.2";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -5604,7 +5604,14 @@ function _csvParse(text){
   const t=String(text||"").replace(/^\uFEFF/,"");
   return t.split(/\r\n|\r|\n/).filter(l=>l.trim().length).map(_csvSplitLinha).map(a=>a.map(c=>c.trim()));
 }
-function _impDataISO(s){ const m=/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec((s||"").trim()); return m?`${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`:""; }
+function _impDataISO(s){
+  s=(s||"").trim(); if(!s) return "";
+  let m=/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})$/.exec(s);   // AAAA-MM-DD (ano primeiro · ISO)
+  if(m) return `${m[1]}-${m[2].padStart(2,"0")}-${m[3].padStart(2,"0")}`;
+  m=/^(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})$/.exec(s);        // DD/MM/AAAA (dia primeiro · BR)
+  if(m) return `${m[3]}-${m[2].padStart(2,"0")}-${m[1].padStart(2,"0")}`;
+  return "";
+}
 function _impLimpaNome(nome){ let s=String(nome||"").trim(); const mb=/^\[([^\]]*)\]/.exec(s); if(mb)return mb[1].trim(); return s.replace(/^\s*\d+(?:\.\d+)*\s*[-.]\s*/,"").trim()||s; }
 function _impNivel(nome){
   const s=String(nome||"").trim();
