@@ -1681,7 +1681,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.93.2";
+const APP_VERSION = "1.93.4";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -5130,6 +5130,9 @@ function _execBadge(exec){
 // ---- helpers do redesenho do Cronograma: previsto (baseline) × reagendado (vigente) × realizado + semáforo ----
 function _pvDmAno(iso){ return iso?`${fmtDM(parseISO(iso))}/${parseISO(iso).getFullYear()}`:"—"; }
 function _pvDm(iso){ return iso?fmtDM(parseISO(iso)):"—"; }
+// Intervalo início–fim (só uma data quando coincidem, ex.: tarefa/atividade de 1 dia).
+function _pvIntervalo(ini, fim){ if(!ini) return "—"; const a=fmtDM(parseISO(ini)); return (!fim||fim===ini)?a:`${a}–${fmtDM(parseISO(fim))}`; }
+function _pvIntervaloAno(ini, fim){ if(!ini) return "—"; const a=`${fmtDM(parseISO(ini))}/${parseISO(ini).getFullYear()}`; if(!fim||fim===ini) return a; return `${a} – ${fmtDM(parseISO(fim))}/${parseISO(fim).getFullYear()}`; }
 function _pvBaseTarefa(p, lineId, tnome){ const bl=_baselineLinhaPorId(p,lineId); if(!bl||!Array.isArray(bl.tarefas))return null; return bl.tarefas.find(x=>x&&x.nome===tnome)||null; }
 function _pvRealTarefa(t){ return (t&&t.exec&&t.exec.status==="realizada"&&t.exec.iso)?t.exec.iso:""; }
 function _pvStatusTarefa(l, t, hoje){
@@ -5196,10 +5199,10 @@ function _renderPrevLinhas(){
     // Sem reagendamento (sem baseline), a data do plano É o previsto e fica editável; Reagendado = "—".
     // Com baseline, Previsto = original (read-only) e Reagendado = vigente (editável).
     const prevCellAtiv=temBase
-      ? `<span class="dval prev">${_pvDmAno(baseL.ini)}</span>`
-      : `<span class="dval prev">${_pvDmAno(l.ini)}${lapisBtn}</span>${edBoxAtiv}`;
+      ? `<span class="dval prev">${_pvIntervaloAno(baseL.ini, baseL.fim)}</span>`
+      : `<span class="dval prev">${_pvIntervaloAno(l.ini, l.fim)}${lapisBtn}</span>${edBoxAtiv}`;
     const reagCellAtiv=temBase
-      ? `<span class="dval reag">${_pvDmAno(l.ini)} ${reagTag}${lapisBtn}</span>${edBoxAtiv}`
+      ? `<span class="dval reag">${_pvIntervaloAno(l.ini, l.fim)} ${reagTag}${lapisBtn}</span>${edBoxAtiv}`
       : `<span class="dval none">—</span>`;
     const distBtn=(podeEd&&l.ini&&l.fim)?`<button class="pvt-dist link-dist" data-li="${idx}" title="Espalha as tarefas pelos dias úteis da atividade"><i data-lucide="wand-2"></i> Distribuir</button>`:"";
     const tbody=tl.length?tl.map((t,tj)=>{
@@ -5217,8 +5220,8 @@ function _renderPrevLinhas(){
       const tEdBox=podeEd?`<span class="pvt-edbox" id="edbox-t-${idx}-${tj}" style="display:none"><input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||"")}" max="${enc(l.fim||"")}"> → <input type="date" class="pvt-fim" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.fim)}" min="${enc(t.ini||l.ini||"")}" max="${enc(l.fim||"")}"></span>`:"";
       let prevTd, reagTd;
       if(!t.complete){ prevTd='<span class="cell-date none">sem data</span>'; reagTd='<span class="cell-date none">—</span>'; }
-      else if(temBaseT){ prevTd=`<span class="cell-date prev">${_pvDm(bt.ini)}</span>`; reagTd=`<span class="cell-date reag">${_pvDm(t.ini)}</span>${tedit}${tEdBox}`; }
-      else { prevTd=`<span class="cell-date prev">${_pvDm(t.ini)}${tedit}</span>${tEdBox}`; reagTd='<span class="cell-date none">—</span>'; }
+      else if(temBaseT){ prevTd=`<span class="cell-date prev">${_pvIntervalo(bt.ini, bt.fim)}</span>`; reagTd=`<span class="cell-date reag">${_pvIntervalo(t.ini, t.fim)}</span>${tedit}${tEdBox}`; }
+      else { prevTd=`<span class="cell-date prev">${_pvIntervalo(t.ini, t.fim)}${tedit}</span>${tEdBox}`; reagTd='<span class="cell-date none">—</span>'; }
       return `<tr${t.foraJanela?' class="tk-forajan"':""}>
         <td data-l="Tarefa"><div class="tk-name">${movecol}<span class="tk-num">${idx+1}.${t.num}</span><span class="tk-lbl" title="${enc(t.nome)}">${enc(t.nome)}</span>${t.manual?'<span class="tk-tagm">avulsa</span>':""}${t.foraJanela?'<span class="pvt-flag" title="Fora da janela da atividade">!</span>':""}${delBtn}</div></td>
         <td data-l="Previsto">${prevTd}</td>
