@@ -1695,7 +1695,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.91.0";
+const APP_VERSION = "1.91.1";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -5203,7 +5203,17 @@ function _renderPrevLinhas(){
     const slotCell=podeEd
       ? `<select class="pvx-slot" data-id="${enc(l.id)}"><option value="">—</option>${slotsLista.map(s=>`<option value="${s.id}" ${s.id===l.slot?"selected":""}>${s.id}</option>`).join("")}</select>`
       : (l.slot?`<span class="slot-tag">${enc(l.slot)}</span>`:'<span class="pvx-defina">—</span>');
-    const reagBox=`<span class="dval reag">${_pvDmAno(l.ini)} ${reagTag}${podeEd?` <button class="pvx-edit" data-tg="ini-${idx}" title="Ajustar início/término manualmente">✏️</button>`:""}</span>${podeEd?`<span class="pvx-edbox" id="edbox-ini-${idx}" style="display:none"><input type="date" class="pvx-ini" data-idx="${idx}" value="${enc(l.ini||"")}"> → <input type="date" class="pvx-fim" data-idx="${idx}" min="${enc(l.ini||"")}" value="${enc(l.fim||"")}"></span>`:""}`;
+    const temBase=!!(baseL&&baseL.ini);
+    const lapisBtn=podeEd?` <button class="pvx-edit" data-tg="ini-${idx}" title="Ajustar início/término manualmente">✏️</button>`:"";
+    const edBoxAtiv=podeEd?`<span class="pvx-edbox" id="edbox-ini-${idx}" style="display:none"><input type="date" class="pvx-ini" data-idx="${idx}" value="${enc(l.ini||"")}"> → <input type="date" class="pvx-fim" data-idx="${idx}" min="${enc(l.ini||"")}" value="${enc(l.fim||"")}"></span>`:"";
+    // Sem reagendamento (sem baseline), a data do plano É o previsto e fica editável; Reagendado = "—".
+    // Com baseline, Previsto = original (read-only) e Reagendado = vigente (editável).
+    const prevCellAtiv=temBase
+      ? `<span class="dval prev">${_pvDmAno(baseL.ini)}</span>`
+      : `<span class="dval prev">${_pvDmAno(l.ini)}${lapisBtn}</span>${edBoxAtiv}`;
+    const reagCellAtiv=temBase
+      ? `<span class="dval reag">${_pvDmAno(l.ini)} ${reagTag}${lapisBtn}</span>${edBoxAtiv}`
+      : `<span class="dval none">—</span>`;
     const distBtn=(podeEd&&l.ini&&l.fim)?`<button class="pvt-dist link-dist" data-li="${idx}" title="Espalha as tarefas pelos dias úteis da atividade"><i data-lucide="wand-2"></i> Distribuir</button>`:"";
     const tbody=tl.length?tl.map((t,tj)=>{
       const bt=_pvBaseTarefa(p, l.id, t.nome);
@@ -5215,11 +5225,17 @@ function _renderPrevLinhas(){
         : (podeMarcar?`<button class="tk-do mini do" data-li="${idx}" data-tn="${enc(t.nome)}">Marcar feita</button><button class="tk-no mini no" data-li="${idx}" data-tn="${enc(t.nome)}">Não feita</button>`:"");
       const movecol=podeEd?`<span class="tk-move"><button class="pvt-up" data-li="${idx}" data-tn="${enc(t.nome)}" title="Subir"${tj===0?" disabled":""}>↑</button><button class="pvt-dn" data-li="${idx}" data-tn="${enc(t.nome)}" title="Descer"${tj===tl.length-1?" disabled":""}>↓</button></span>`:"";
       const delBtn=podeEd?`<button class="pvt-del tk-del" data-li="${idx}" data-tn="${enc(t.nome)}" title="${t.manual?"Remover tarefa avulsa":"Ocultar tarefa do catálogo (reinclua para trazer de volta)"}">×</button>`:"";
-      const tedit=podeEd?` <button class="pvt-edit" data-tg="t-${idx}-${tj}" title="Ajustar datas da tarefa">✏️</button><span class="pvt-edbox" id="edbox-t-${idx}-${tj}" style="display:none"><input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||"")}" max="${enc(l.fim||"")}"> → <input type="date" class="pvt-fim" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.fim)}" min="${enc(t.ini||l.ini||"")}" max="${enc(l.fim||"")}"></span>`:"";
+      const temBaseT=!!(bt&&bt.ini);
+      const tedit=podeEd?` <button class="pvt-edit" data-tg="t-${idx}-${tj}" title="Ajustar datas da tarefa">✏️</button>`:"";
+      const tEdBox=podeEd?`<span class="pvt-edbox" id="edbox-t-${idx}-${tj}" style="display:none"><input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||"")}" max="${enc(l.fim||"")}"> → <input type="date" class="pvt-fim" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.fim)}" min="${enc(t.ini||l.ini||"")}" max="${enc(l.fim||"")}"></span>`:"";
+      let prevTd, reagTd;
+      if(!t.complete){ prevTd='<span class="cell-date none">sem data</span>'; reagTd='<span class="cell-date none">—</span>'; }
+      else if(temBaseT){ prevTd=`<span class="cell-date prev">${_pvDm(bt.ini)}</span>`; reagTd=`<span class="cell-date reag">${_pvDm(t.ini)}</span>${tedit}${tEdBox}`; }
+      else { prevTd=`<span class="cell-date prev">${_pvDm(t.ini)}${tedit}</span>${tEdBox}`; reagTd='<span class="cell-date none">—</span>'; }
       return `<tr${t.foraJanela?' class="tk-forajan"':""}>
         <td data-l="Tarefa"><div class="tk-name">${movecol}<span class="tk-num">${idx+1}.${t.num}</span><span class="tk-lbl" title="${enc(t.nome)}">${enc(t.nome)}</span>${t.manual?'<span class="tk-tagm">avulsa</span>':""}${t.foraJanela?'<span class="pvt-flag" title="Fora da janela da atividade">!</span>':""}${delBtn}</div></td>
-        <td data-l="Previsto"><span class="cell-date prev">${_pvDm(bt&&bt.ini)}</span></td>
-        <td data-l="Reagendado"><span class="cell-date ${t.complete?"reag":"none"}">${t.complete?_pvDm(t.ini):"sem data"}</span>${tedit}</td>
+        <td data-l="Previsto">${prevTd}</td>
+        <td data-l="Reagendado">${reagTd}</td>
         <td data-l="Realizado"><span class="cell-date ${real?"real":"none"}">${real?_pvDm(real):"—"}</span></td>
         <td data-l="Status"><span class="pill ${stt.k}"><i></i> ${stt.txt}</span></td>
         <td data-l="Ação"><div class="tk-acts">${acoes}</div></td>
@@ -5234,9 +5250,9 @@ function _renderPrevLinhas(){
           <div class="act-title">${enc(l.atv)}${planoOnly?'<span class="pvx-plano-tag">só plano</span>':""}</div>
           <div class="act-meta">${anCell} ${slotCell} · ${l.slots||0} dia(s) úteis</div>
           <div class="act-dates">
-            <div class="dpair"><span class="dl">Previsto</span><span class="dval prev">${_pvDmAno(baseL&&baseL.ini)}</span></div>
+            <div class="dpair"><span class="dl">Previsto</span>${prevCellAtiv}</div>
             <span class="arrow">→</span>
-            <div class="dpair"><span class="dl">Reagendado</span>${reagBox}</div>
+            <div class="dpair"><span class="dl">Reagendado</span>${reagCellAtiv}</div>
             <span class="arrow">→</span>
             <div class="dpair"><span class="dl">Realizado</span><span class="dval ${realAtiv?"real":"none"}">${realAtiv||"— a realizar"}</span></div>
           </div>
