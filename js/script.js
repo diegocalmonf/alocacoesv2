@@ -1695,7 +1695,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.90.0";
+const APP_VERSION = "1.91.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -5140,6 +5140,30 @@ function _execBadge(exec){
   return "";
 }
 
+// ---- helpers do redesenho do Cronograma: previsto (baseline) × reagendado (vigente) × realizado + semáforo ----
+function _pvDmAno(iso){ return iso?`${fmtDM(parseISO(iso))}/${parseISO(iso).getFullYear()}`:"—"; }
+function _pvDm(iso){ return iso?fmtDM(parseISO(iso)):"—"; }
+function _pvBaseTarefa(p, lineId, tnome){ const bl=_baselineLinhaPorId(p,lineId); if(!bl||!Array.isArray(bl.tarefas))return null; return bl.tarefas.find(x=>x&&x.nome===tnome)||null; }
+function _pvRealTarefa(t){ return (t&&t.exec&&t.exec.status==="realizada"&&t.exec.iso)?t.exec.iso:""; }
+function _pvStatusTarefa(l, t, hoje){
+  const st=t.exec&&t.exec.status;
+  if(st==="realizada") return {k:"ok",  txt:"Feita"};
+  if(st==="nao")       return {k:"bad", txt:"Não feita"};
+  const ref=t.fim||t.ini||l.fim||l.ini||"";          // vencida = prazo já passou e ninguém marcou
+  if(ref && ref<hoje)  return {k:"warn",txt:"Vencida"};
+  return {k:"neu", txt:"Prevista"};
+}
+// Marca uma tarefa direto no Cronograma (resolve cli/an/slot/dia da linha e delega a _marcarTarefaExec).
+function _pvMarcarTarefaCron(lineIdx, tnome, status){
+  const p=_pvLiveProj(); if(!p)return;
+  const l=(p.previstoLinhas||[])[lineIdx]; if(!l)return;
+  if(status!=="" && (!l.an||!l.slot)){ alert("Defina o analista e o slot desta atividade para marcar o realizado."); return; }
+  const t=(_tarefasLinha(l)||[]).find(x=>x&&x.nome===tnome);
+  const iso=(t&&t.ini)||l.ini;
+  if(status!=="" && !iso){ alert("Esta tarefa ainda não tem data definida."); return; }
+  if(_marcarTarefaExec(p.nome, l.id, tnome, status, l.an, iso, l.slot)) _renderPrevLinhas();
+}
+
 function _renderPrevLinhas(){
   const host=el("pvLinhas"); if(!host)return;
   const resumo=el("pvResumo"), warn=el("pvWarn");
@@ -5156,59 +5180,78 @@ function _renderPrevLinhas(){
   const slotsLista=SLOTS.filter(s=>!s.lunch);
   const podeEd=canEditAction("cronograma");
   let totalSlots=0, termino="", inicio="", totalTarefas=0, nPlano=0;
-  const head=`<div class="pvx-head"><div>#</div><div>Analista</div><div>Slot</div><div>Atividade</div><div>Início</div><div>Término</div><div>Slots</div><div>Ordem</div><div></div></div>`;
+  const hoje=toISO(new Date());
+  const legenda=`<div class="cr-legend"><b>Status</b><span class="cr-dot ok"><i></i> Feita</span><span class="cr-dot warn"><i></i> Vencida</span><span class="cr-dot bad"><i></i> Não feita</span><span class="cr-dot neu"><i></i> Prevista</span></div>`;
   const rows=L.map((l,idx)=>{
     totalSlots+=(l.slots||0);
     if(l.fim&&(!termino||l.fim>termino))termino=l.fim;
     if(l.ini&&(!inicio||l.ini<inicio))inicio=l.ini;
-    const fimTxt=l.fim?`${fmtDM(parseISO(l.fim))}/${parseISO(l.fim).getFullYear()}`:"—";
-    const autoCls=l.iniManual?"":"pvx-auto";
-    const autoFimCls=l.fimManual?"":"pvx-auto";
-    const tl=_tarefasLinha(l);                        // catálogo + datas (1ª = início da atividade)
+    const tl=_tarefasLinha(l);
     totalTarefas+=tl.length;
-    const podeEdT=canEditAction("cronograma");
-    let subHTML="";
-    if(tl.length){
-      const linhasT=tl.map((t,tj)=>{
-        const flag=t.foraJanela?`<span class="pvt-flag" title="Fora da janela da atividade — ajuste as datas">!</span>`:"";
-        if(podeEdT){
-          return `<div class="pvt-row${t.complete?"":" pvt-inc"}">
-            <div class="pvt-top"><span class="pvt-num">${idx+1}.${t.num}</span>
-              <span class="pvt-move"><button class="pvt-up" data-li="${idx}" data-tn="${enc(t.nome)}" title="Subir"${tj===0?" disabled":""}>↑</button><button class="pvt-dn" data-li="${idx}" data-tn="${enc(t.nome)}" title="Descer"${tj===tl.length-1?" disabled":""}>↓</button></span>
-              <span class="pvt-nm" title="${enc(t.nome)}">${enc(t.nome)}</span>${_execBadge(t.exec)}${flag}${t.manual?`<span class="pvt-tagm" title="Tarefa incluída neste projeto (não vem do catálogo)">avulsa</span>`:""}<button class="pvt-del" data-li="${idx}" data-tn="${enc(t.nome)}" title="${t.manual?'Remover tarefa avulsa':'Remover tarefa do catálogo (oculta neste projeto · reinclua para trazer de volta)'}">×</button></div>
-            <div class="pvt-dates">
-              <label class="pvt-dt"><span>Início</span><input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||'')}" max="${enc(l.fim||'')}"></label>
-              <span class="pvt-arr">→</span>
-              <label class="pvt-dt"><span>Término</span><input type="date" class="pvt-fim" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.fim)}" min="${enc(t.ini||l.ini||'')}" max="${enc(l.fim||'')}"></label>
-            </div>
-          </div>`;
-        }
-        const dt=t.complete?`${fmtDM(parseISO(t.ini))}→${fmtDM(parseISO(t.fim))}`:"sem data";
-        return `<div class="pvt-row pvt-ro"><span class="pvt-num">${idx+1}.${t.num}</span><span class="pvt-nm">${enc(t.nome)}</span>${_execBadge(t.exec)}<span class="pvt-dtxt">${dt}</span>${flag}</div>`;
-      }).join("");
-      const distBtn=(podeEdT&&l.ini&&l.fim)?`<button class="pvt-dist" data-li="${idx}" title="Espalha as tarefas, na ordem, pelos dias úteis da atividade"><i data-lucide="wand-2"></i> Distribuir no período</button>`:"";
-      subHTML=`<div class="pvx-tarefas"><div class="pvt-h"><i data-lucide="list-checks"></i> Tarefas <span class="pvt-hint">· ordene com ↑↓ · 1ª inicia no começo da atividade · dentro de ${enc(l.ini||'?')}–${enc(l.fim||'?')}</span>${distBtn}</div>${linhasT}</div>`;
-    }
     const planoOnly=(!l.an||!l.slot); if(planoOnly) nPlano++;
+    const baseL=_baselineLinhaPorId(p, l.id);
+    const reagDelta=(baseL&&baseL.ini&&l.ini)?_duDelta(baseL.ini, l.ini):null;
+    const reagTag=(reagDelta!==null&&reagDelta!==0)?`<span class="reag-chg">${reagDelta>0?"+":""}${reagDelta} d.u.</span>`:"";
+    const feitas=tl.filter(t=>t.exec&&t.exec.status==="realizada").length;
+    const totalT=tl.length;
+    const pct=totalT?Math.round(feitas/totalT*100):0;
+    const execIsos=tl.filter(t=>_pvRealTarefa(t)).map(t=>t.exec.iso).sort();
+    const realAtiv=(totalT&&feitas===totalT)?_pvDmAno(execIsos[execIsos.length-1]):(feitas?"parcial":"");
     const anCell=podeEd
-      ? `<select class="pvx-an" data-id="${enc(l.id)}"><option value="">— só plano —</option>${team.map(a=>`<option ${a===l.an?'selected':''}>${enc(a)}</option>`).join("")}${(l.an&&!team.includes(l.an))?`<option selected>${enc(l.an)}</option>`:""}</select>`
-      : (l.an?enc(l.an):'<span class="pvx-plano-tag">só plano</span>');
+      ? `<select class="pvx-an" data-id="${enc(l.id)}"><option value="">— só plano —</option>${team.map(a=>`<option ${a===l.an?"selected":""}>${enc(a)}</option>`).join("")}${(l.an&&!team.includes(l.an))?`<option selected>${enc(l.an)}</option>`:""}</select>`
+      : (l.an?`<span class="cr-who">👤 ${enc(l.an)}</span>`:'<span class="pvx-plano-tag">só plano</span>');
     const slotCell=podeEd
-      ? `<select class="pvx-slot" data-id="${enc(l.id)}"><option value="">—</option>${slotsLista.map(s=>`<option value="${s.id}" ${s.id===l.slot?'selected':''}>${s.id}</option>`).join("")}</select>`
-      : (l.slot?enc(l.slot):'<span class="pvx-defina">—</span>');
-    return `<div class="pvx-row${flagged.has(idx)?" pvx-row-warn":""}${planoOnly?" pvx-row-plano":""}">
-      <div class="pvx-ord">${idx+1}</div>
-      <div class="cr-an">${anCell}</div>
-      <div>${slotCell}</div>
-      <div>${enc(l.atv)}</div>
-      <div class="${autoCls}"><input type="date" value="${enc(l.ini||'')}" data-idx="${idx}" class="pvx-ini" title="${l.iniManual?'Início manual (trava o encadeamento). Limpe para re-encadear.':'Início automático (encadeado). Preencha para travar.'}"></div>
-      <div class="${autoFimCls}"><input type="date" value="${enc(l.fim||'')}" min="${enc(l.ini||'')}" data-idx="${idx}" class="pvx-fim" title="${l.fimManual?'Término manual (ajustado). Limpe para voltar à duração da atividade.':'Término automático (duração da atividade). Edite para ajustar os slots reais.'}"></div>
-      <div>${l.slots||0}</div>
-      <div class="pvx-move"><button class="pvx-up" data-id="${enc(l.id)}" title="Subir">↑</button><button class="pvx-dn" data-id="${enc(l.id)}" title="Descer">↓</button><button class="pvx-up pvx-reag" data-id="${enc(l.id)}" title="Reagendar a partir desta atividade (cascata)">⟳</button></div>
-      <button class="pvx-del" data-id="${enc(l.id)}">Remover</button>
-    </div>${subHTML}`;
+      ? `<select class="pvx-slot" data-id="${enc(l.id)}"><option value="">—</option>${slotsLista.map(s=>`<option value="${s.id}" ${s.id===l.slot?"selected":""}>${s.id}</option>`).join("")}</select>`
+      : (l.slot?`<span class="slot-tag">${enc(l.slot)}</span>`:'<span class="pvx-defina">—</span>');
+    const reagBox=`<span class="dval reag">${_pvDmAno(l.ini)} ${reagTag}${podeEd?` <button class="pvx-edit" data-tg="ini-${idx}" title="Ajustar início/término manualmente">✏️</button>`:""}</span>${podeEd?`<span class="pvx-edbox" id="edbox-ini-${idx}" style="display:none"><input type="date" class="pvx-ini" data-idx="${idx}" value="${enc(l.ini||"")}"> → <input type="date" class="pvx-fim" data-idx="${idx}" min="${enc(l.ini||"")}" value="${enc(l.fim||"")}"></span>`:""}`;
+    const distBtn=(podeEd&&l.ini&&l.fim)?`<button class="pvt-dist link-dist" data-li="${idx}" title="Espalha as tarefas pelos dias úteis da atividade"><i data-lucide="wand-2"></i> Distribuir</button>`:"";
+    const tbody=tl.length?tl.map((t,tj)=>{
+      const bt=_pvBaseTarefa(p, l.id, t.nome);
+      const stt=_pvStatusTarefa(l, t, hoje);
+      const real=_pvRealTarefa(t);
+      const podeMarcar=podeEd&&l.an&&l.slot;
+      const acoes = stt.k==="ok"
+        ? (podeMarcar?`<button class="tk-undo mini undo" data-li="${idx}" data-tn="${enc(t.nome)}">Desfazer</button>`:"")
+        : (podeMarcar?`<button class="tk-do mini do" data-li="${idx}" data-tn="${enc(t.nome)}">Marcar feita</button><button class="tk-no mini no" data-li="${idx}" data-tn="${enc(t.nome)}">Não feita</button>`:"");
+      const movecol=podeEd?`<span class="tk-move"><button class="pvt-up" data-li="${idx}" data-tn="${enc(t.nome)}" title="Subir"${tj===0?" disabled":""}>↑</button><button class="pvt-dn" data-li="${idx}" data-tn="${enc(t.nome)}" title="Descer"${tj===tl.length-1?" disabled":""}>↓</button></span>`:"";
+      const delBtn=podeEd?`<button class="pvt-del tk-del" data-li="${idx}" data-tn="${enc(t.nome)}" title="${t.manual?"Remover tarefa avulsa":"Ocultar tarefa do catálogo (reinclua para trazer de volta)"}">×</button>`:"";
+      const tedit=podeEd?` <button class="pvt-edit" data-tg="t-${idx}-${tj}" title="Ajustar datas da tarefa">✏️</button><span class="pvt-edbox" id="edbox-t-${idx}-${tj}" style="display:none"><input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||"")}" max="${enc(l.fim||"")}"> → <input type="date" class="pvt-fim" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.fim)}" min="${enc(t.ini||l.ini||"")}" max="${enc(l.fim||"")}"></span>`:"";
+      return `<tr${t.foraJanela?' class="tk-forajan"':""}>
+        <td data-l="Tarefa"><div class="tk-name">${movecol}<span class="tk-num">${idx+1}.${t.num}</span><span class="tk-lbl" title="${enc(t.nome)}">${enc(t.nome)}</span>${t.manual?'<span class="tk-tagm">avulsa</span>':""}${t.foraJanela?'<span class="pvt-flag" title="Fora da janela da atividade">!</span>':""}${delBtn}</div></td>
+        <td data-l="Previsto"><span class="cell-date prev">${_pvDm(bt&&bt.ini)}</span></td>
+        <td data-l="Reagendado"><span class="cell-date ${t.complete?"reag":"none"}">${t.complete?_pvDm(t.ini):"sem data"}</span>${tedit}</td>
+        <td data-l="Realizado"><span class="cell-date ${real?"real":"none"}">${real?_pvDm(real):"—"}</span></td>
+        <td data-l="Status"><span class="pill ${stt.k}"><i></i> ${stt.txt}</span></td>
+        <td data-l="Ação"><div class="tk-acts">${acoes}</div></td>
+      </tr>`;
+    }).join(""):`<tr><td colspan="6" class="tk-empty">Sem tarefas nesta atividade.</td></tr>`;
+    const tarefasTbl=`<table class="tk-tbl"><thead><tr><th>Tarefa</th><th class="c-date">Previsto</th><th class="c-date">Reagendado</th><th class="c-date">Realizado</th><th class="c-st">Status</th><th class="c-act">Ação${distBtn}</th></tr></thead><tbody>${tbody}</tbody></table>`;
+    const acts=podeEd?`<button class="pvx-reag btn-reag" data-id="${enc(l.id)}" title="Reagendar a partir desta atividade (cascata)">⟳ Reagendar</button><button class="iconbtn pvx-up" data-id="${enc(l.id)}" title="Subir">↑</button><button class="iconbtn pvx-dn" data-id="${enc(l.id)}" title="Descer">↓</button><button class="iconbtn cr-danger pvx-del" data-id="${enc(l.id)}" title="Remover atividade">🗑</button>`:"";
+    return `<div class="cr-act${flagged.has(idx)?" warnjan":""}${planoOnly?" act-plano":""}">
+      <div class="act-head">
+        <div class="act-num">${idx+1}</div>
+        <div class="act-main">
+          <div class="act-title">${enc(l.atv)}${planoOnly?'<span class="pvx-plano-tag">só plano</span>':""}</div>
+          <div class="act-meta">${anCell} ${slotCell} · ${l.slots||0} dia(s) úteis</div>
+          <div class="act-dates">
+            <div class="dpair"><span class="dl">Previsto</span><span class="dval prev">${_pvDmAno(baseL&&baseL.ini)}</span></div>
+            <span class="arrow">→</span>
+            <div class="dpair"><span class="dl">Reagendado</span>${reagBox}</div>
+            <span class="arrow">→</span>
+            <div class="dpair"><span class="dl">Realizado</span><span class="dval ${realAtiv?"real":"none"}">${realAtiv||"— a realizar"}</span></div>
+          </div>
+        </div>
+        <div class="act-right">
+          <div class="cr-prog"><span class="cr-lbl">${feitas}/${totalT} feitas</span><div class="cr-bar"><i style="width:${pct}%"></i></div></div>
+          <div class="act-acts">${acts}</div>
+        </div>
+      </div>
+      ${tarefasTbl}
+      ${flagged.has(idx)?`<div class="jan-warn"><i data-lucide="alert-triangle"></i> Sobreposição de datas com outra atividade do mesmo analista/slot — ao aplicar, a 1ª prevalece em cada dia.</div>`:""}
+    </div>`;
   }).join("");
-  host.innerHTML=_pvInclTarefaBar(p)+head+rows;
+  host.innerHTML=_pvInclTarefaBar(p)+legenda+rows;
+
   { const ab=el("pvtAddBtn"); if(ab)ab.addEventListener("click",()=>{ const sel=el("pvtAtivSel"), nm=el("pvtNome"); if(!sel||!nm)return; if(_pvIncluirTarefa(sel.value, nm.value)){ /* re-render limpa o campo */ } });
     const nm=el("pvtNome"); if(nm)nm.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); const sel=el("pvtAtivSel"); if(sel)_pvIncluirTarefa(sel.value, nm.value); } }); }
   host.querySelectorAll(".pvx-del").forEach(b=>b.addEventListener("click",()=>_pvRemoverLinha(b.dataset.id)));
@@ -5225,6 +5268,10 @@ function _renderPrevLinhas(){
   host.querySelectorAll(".pvt-dn").forEach(b=>b.addEventListener("click",()=>_pvTarefasMover(+b.dataset.li,dec(b.dataset.tn),1)));
   host.querySelectorAll(".pvt-dist").forEach(b=>b.addEventListener("click",()=>_pvDistribuirTarefas(+b.dataset.li)));
   host.querySelectorAll(".pvt-del").forEach(b=>b.addEventListener("click",()=>_pvRemoverTarefa(+b.dataset.li,dec(b.dataset.tn))));
+  host.querySelectorAll(".pvx-edit,.pvt-edit").forEach(b=>b.addEventListener("click",()=>{ const box=el("edbox-"+b.dataset.tg); if(!box)return; const vis=box.style.display!=="none"; box.style.display=vis?"none":"inline-flex"; if(!vis){ const i=box.querySelector("input"); if(i)i.focus(); } }));
+  host.querySelectorAll(".tk-do").forEach(b=>b.addEventListener("click",()=>_pvMarcarTarefaCron(+b.dataset.li,dec(b.dataset.tn),"realizada")));
+  host.querySelectorAll(".tk-no").forEach(b=>b.addEventListener("click",()=>_pvMarcarTarefaCron(+b.dataset.li,dec(b.dataset.tn),"nao")));
+  host.querySelectorAll(".tk-undo").forEach(b=>b.addEventListener("click",()=>_pvMarcarTarefaCron(+b.dataset.li,dec(b.dataset.tn),"")));
   const aplicado=p&&p.previstoAplicadoEm;
   const statusHTML=aplicado?`<span class="pvx-status ok">Aplicado em ${enc(String(aplicado).slice(0,16).replace("T"," "))}</span>`:`<span class="pvx-status pend">Pendente de aplicação</span>`;
   const terminoTxt=termino?`${fmtDM(parseISO(termino))}/${parseISO(termino).getFullYear()}`:"—";
