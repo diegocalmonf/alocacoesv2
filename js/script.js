@@ -61,6 +61,7 @@ const ETAPAS=[
   {id:"cadastros",    label:"Cadastros Básicos", field:"dtCadBasicos",   ico:"clipboard-list", fase:"pre"},
   {id:"logistica",    label:"Logística",         field:"dtLogistica",    ico:"truck",          fase:"pre"},
   {id:"backoffice",   label:"Backoffice",        field:"dtBackoffice",   ico:"layout-panel-left", fase:"pre"},
+  {id:"pre_golive",   label:"Pré Go-Live",       field:"dtPreGoLive",    ico:"list-checks",    fase:"pre"},
   {id:"golive",       label:"Go-Live",           field:"goLiveRealizado", glPrev:true,         ico:"rocket",        fase:"golive"},
   {id:"hypercare",    label:"Hypercare",         field:"dtHypercare",    ico:"heart-pulse",    fase:"pos"},
   {id:"monitoramento",label:"Monitoramento",     field:"dtMonitoramento",ico:"activity",       fase:"pos"},
@@ -1681,7 +1682,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.93.5";
+const APP_VERSION = "1.94.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -6372,10 +6373,11 @@ function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
         <div class="f"><label>2 · Cadastros básicos</label><input type="date" id="f_dtCad" value="${enc(p.dtCadBasicos||'')}"></div>
         <div class="f"><label>3 · Logística</label><input type="date" id="f_dtLog" value="${enc(p.dtLogistica||'')}"></div>
         <div class="f"><label>4 · Backoffice</label><input type="date" id="f_dtBack" value="${enc(p.dtBackoffice||'')}"></div>
-        <div class="f"><label>6 · Hypercare</label><input type="date" id="f_dtHyper" value="${enc(p.dtHypercare||'')}"></div>
-        <div class="f"><label>7 · Monitoramento</label><input type="date" id="f_dtMon" value="${enc(p.dtMonitoramento||'')}"></div>
-        <div class="f"><label>8 · Frota</label><input type="date" id="f_dtFrota" value="${enc(p.dtFrota||'')}"></div>
-        <div class="f"><label>9 · Sustentação</label><input type="date" id="f_dtSust" value="${enc(p.dtSustentacao||'')}"></div>
+        <div class="f"><label>5 · Pré Go-Live</label><input type="date" id="f_dtPreGl" value="${enc(p.dtPreGoLive||'')}"></div>
+        <div class="f"><label>7 · Hypercare</label><input type="date" id="f_dtHyper" value="${enc(p.dtHypercare||'')}"></div>
+        <div class="f"><label>8 · Monitoramento</label><input type="date" id="f_dtMon" value="${enc(p.dtMonitoramento||'')}"></div>
+        <div class="f"><label>9 · Frota</label><input type="date" id="f_dtFrota" value="${enc(p.dtFrota||'')}"></div>
+        <div class="f"><label>10 · Sustentação</label><input type="date" id="f_dtSust" value="${enc(p.dtSustentacao||'')}"></div>
         <div class="f full"><label>Analistas no projeto (vínculo)</label>
           <div class="chk-grid" id="f_analistas">${analistaNomes().map(n=>{const on=(p.analistas||[]).includes(n);return `<label class="chk ${on?'sel':''}"><input type="checkbox" value="${enc(n)}" ${on?'checked':''}>${n}</label>`;}).join("")||'<div class="hint" style="padding:10px">Cadastre analistas primeiro.</div>'}${(p.analistas||[]).filter(n=>!analistaNomes().includes(n)).map(n=>`<label class="chk sel" style="opacity:.6"><input type="checkbox" value="${enc(n)}" checked>${enc(n)} (inativo)</label>`).join("")}</div>
           <div class="hint">O <b>tipo do projeto</b> limita quais atividades podem ser lançadas nele. O <b>bloco Go-Live</b> alimenta os relatórios de Gestão e Controle de Go-Lives (datas, situação, modalidade).</div>
@@ -6389,7 +6391,7 @@ function renderForm(){ lucideRefresh(); /* Fase 4: auto-cobre icones em qualquer
       const analistas=[...b.querySelectorAll('#f_analistas input:checked')].map(i=>dec(i.value));
       const _catBtn=b.querySelector('#f_cat .tier-chip.on');
       const categoria=_catBtn?_catBtn.dataset.cat:"";
-      const obj={nome,tipo:el("f_tipo").value,segmentacao:el("f_seg").value,categoria:categoria||"",status:el("f_status").value,gp:el("f_gp").value,lider:el("f_lider").value,analistas,contatosCliente:_lerContatosDOM().filter(c=>c.nome||c.email),dtRecebimento:el("f_dtReceb").value,goLivePrevisto:el("f_glPrev").value,goLiveAjustado:el("f_glAju").value,goLiveRealizado:el("f_glReal").value,goLiveModalidade:el("f_glMod").value,goLiveSituacao:el("f_glSit").value,etapaAtual:el("f_etapa").value,dtDiscovery:el("f_dtDisc").value,dtCadBasicos:el("f_dtCad").value,dtLogistica:el("f_dtLog").value,dtBackoffice:el("f_dtBack").value,dtHypercare:el("f_dtHyper").value,dtMonitoramento:el("f_dtMon").value,dtFrota:el("f_dtFrota").value,dtSustentacao:el("f_dtSust").value};
+      const obj={nome,tipo:el("f_tipo").value,segmentacao:el("f_seg").value,categoria:categoria||"",status:el("f_status").value,gp:el("f_gp").value,lider:el("f_lider").value,analistas,contatosCliente:_lerContatosDOM().filter(c=>c.nome||c.email),dtRecebimento:el("f_dtReceb").value,goLivePrevisto:el("f_glPrev").value,goLiveAjustado:el("f_glAju").value,goLiveRealizado:el("f_glReal").value,goLiveModalidade:el("f_glMod").value,goLiveSituacao:el("f_glSit").value,etapaAtual:el("f_etapa").value,dtDiscovery:el("f_dtDisc").value,dtCadBasicos:el("f_dtCad").value,dtLogistica:el("f_dtLog").value,dtBackoffice:el("f_dtBack").value,dtPreGoLive:el("f_dtPreGl").value,dtHypercare:el("f_dtHyper").value,dtMonitoramento:el("f_dtMon").value,dtFrota:el("f_dtFrota").value,dtSustentacao:el("f_dtSust").value};
       if(isNew){REG.projetos.push(obj);audit("project.create",nome,null,obj);}
       else{
         const antes=Object.assign({},actEditing);
@@ -10454,12 +10456,13 @@ function renderEsteiraTabela(){
     <th class="stage-h">${num(2)}Cadastros básicos</th>
     <th class="stage-h">${num(3)}Logística</th>
     <th class="stage-h">${num(4)}Backoffice</th>
-    <th class="stage-h gl-h">${num(5)}Go-Live previsto</th>
+    <th class="stage-h">${num(5)}Pré Go-Live</th>
+    <th class="stage-h gl-h">${num(6)}Go-Live previsto</th>
     <th class="stage-h gl-h">Go-Live realizado</th>
-    <th class="stage-h">${num(6)}Hypercare</th>
-    <th class="stage-h">${num(7)}Monitoramento</th>
-    <th class="stage-h">${num(8)}Frota</th>
-    <th class="stage-h">${num(9)}Sustentação</th>
+    <th class="stage-h">${num(7)}Hypercare</th>
+    <th class="stage-h">${num(8)}Monitoramento</th>
+    <th class="stage-h">${num(9)}Frota</th>
+    <th class="stage-h">${num(10)}Sustentação</th>
   </tr></thead>`;
   const rows=arr.map(p=>{
     const ans=(p.analistas||[]);
@@ -10476,6 +10479,7 @@ function renderEsteiraTabela(){
       ${_estDateCell(p,"dtCadBasicos")}
       ${_estDateCell(p,"dtLogistica")}
       ${_estDateCell(p,"dtBackoffice")}
+      ${_estDateCell(p,"dtPreGoLive")}
       ${glPrevCell}
       ${glRealCell}
       ${_estDateCell(p,"dtHypercare")}
@@ -10565,13 +10569,14 @@ function renderEsteiraPrevReal(){
     <th class="stage-h">${num(2)}Cadastros básicos</th>
     <th class="stage-h">${num(3)}Logística</th>
     <th class="stage-h">${num(4)}Backoffice</th>
-    <th class="stage-h gl-h">${num(5)}Go-Live</th>
-    <th class="stage-h">${num(6)}Hypercare</th>
-    <th class="stage-h">${num(7)}Monitoramento</th>
-    <th class="stage-h">${num(8)}Frota</th>
-    <th class="stage-h">${num(9)}Sustentação</th>
+    <th class="stage-h">${num(5)}Pré Go-Live</th>
+    <th class="stage-h gl-h">${num(6)}Go-Live</th>
+    <th class="stage-h">${num(7)}Hypercare</th>
+    <th class="stage-h">${num(8)}Monitoramento</th>
+    <th class="stage-h">${num(9)}Frota</th>
+    <th class="stage-h">${num(10)}Sustentação</th>
   </tr></thead>`;
-  const ordem=["discovery","cadastros","logistica","backoffice","golive","hypercare","monitoramento","frota","sustentacao"];
+  const ordem=["discovery","cadastros","logistica","backoffice","pre_golive","golive","hypercare","monitoramento","frota","sustentacao"];
   const rows=arr.map(p=>{
     if(typeof _pvRecalcChain==="function") _pvRecalcChain(p);
     const prevE={};
@@ -10675,6 +10680,7 @@ function renderEsteiraDashboard(host){
     cadastros:{color:'#F26C20',bg:'#FFF1E5',bd:'#FBC7A6',desc:'Parametrização inicial, cadastros, pessoas, clientes e base operacional.'},
     logistica:{color:'#F59E0B',bg:'#FFFBEB',bd:'#FDE68A',desc:'Fluxos logísticos, coletas, entregas, documentos e operação.'},
     backoffice:{color:'#5B6EE1',bg:'#EEF2FF',bd:'#C7D2FE',desc:'Financeiro, fiscal, faturamento, integrações e regras administrativas.'},
+    pre_golive:{color:'#0EA5E9',bg:'#F0F9FF',bd:'#BAE6FD',desc:'Preparação final e checagem de prontidão antes da virada para produção.'},
     golive:{color:'#16A34A',bg:'#F0FDF4',bd:'#BBF7D0',desc:'Entrada em produção, acompanhamento da virada e validação do uso real.'},
     hypercare:{color:'#8B5CF6',bg:'#F5F3FF',bd:'#DDD6FE',desc:'Acompanhamento intensivo pós Go-Live e estabilização assistida.'},
     monitoramento:{color:'#0F766E',bg:'#F0FDFA',bd:'#99F6E4',desc:'Tracking, eventos, visibilidade operacional e monitoramento.'},
@@ -10754,7 +10760,7 @@ function renderEsteiraPainel(){
   const card=(l,n,sub,accent)=>`<div class="kpi-card ${accent||''}"><div class="kpi-l">${l}</div><div class="kpi-n">${n}</div><div class="kpi-sub">${sub||''}</div></div>`;
   const kpis=`<div class="kpi-grid" style="margin-bottom:22px">
     ${card("Em implantação", arr.length, "projetos no fluxo", "accent-proj")}
-    ${card("Pré Go-Live", totalPre, "discovery · cadastros · logística · backoffice", "")}
+    ${card("Pré Go-Live", totalPre, "discovery · cadastros · logística · backoffice · pré go-live", "")}
     ${card("Go-Live atrasado", atrasados, atrasados?"prazo-base já vencido":"nenhum vencido", atrasados?"accent-aus":"")}
     ${card("Próx. 30 dias", prox30, "go-lives a vencer", "")}
     ${card("Go-Lives realizados", realizados, "já entraram em produção", "")}
