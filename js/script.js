@@ -1711,7 +1711,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.99.2";
+const APP_VERSION = "1.100.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -10998,6 +10998,138 @@ function renderEsteiraPrevReal(){
   body.innerHTML=legenda+`<div class="est-scroll"><table class="est-table pr-table">${head}<tbody>${rows}</tbody></table></div>`;
   lucideRefresh();
 }
+
+/* ===================== Esteira · Relatório 1 página (paisagem A4) =====================
+   Situação dos projetos: etapa atual + atraso (previsto × realizado) da etapa atual e do
+   Go-Live. Derivado em tempo real (somente leitura); respeita os filtros aplicados
+   (esteiraFiltrados). Impressão no padrão do Pré Go-Live: host #estReport + body.estRepPrinting
+   + window.print. NÃO grava nada (apenas leitura). */
+function _estRepAtraso(prev, real, hoje){
+  // Estado do atraso entre uma data prevista e uma realizada (ou "hoje" se ainda não realizou).
+  // na: sem previsto · ok: ≤0 (no prazo/adiantado) · warn:1–7d · bad:>7d
+  // aberto: não realizado e previsto já vencido · pend: não realizado e ainda no futuro.
+  if(!prev) return {estado:"na", dias:null};
+  if(real){
+    const d=Math.round((parseISO(real)-parseISO(prev))/86400000);
+    if(d<=0) return {estado:"ok", dias:d};
+    if(d<=7) return {estado:"warn", dias:d};
+    return {estado:"bad", dias:d};
+  }
+  const d=Math.round((parseISO(hoje)-parseISO(prev))/86400000);
+  if(d>0) return {estado:"aberto", dias:d};
+  return {estado:"pend", dias:d};
+}
+function _estRepPeso(a){
+  // peso numérico p/ ordenação (maior atraso primeiro). na/pend vão pro fim.
+  if(!a) return -999999;
+  if(a.estado==="bad"||a.estado==="warn"||a.estado==="aberto"||a.estado==="ok") return a.dias;
+  return -999999;
+}
+function _estRepChip(a){
+  if(!a||a.estado==="na") return '<span class="er-chip er-na">—</span>';
+  if(a.estado==="ok")    return '<span class="er-chip er-ok">'+(a.dias===0?"no prazo":a.dias+"d")+'</span>';
+  if(a.estado==="warn")  return '<span class="er-chip er-warn">+'+a.dias+'d</span>';
+  if(a.estado==="bad")   return '<span class="er-chip er-bad">+'+a.dias+'d</span>';
+  if(a.estado==="aberto")return '<span class="er-chip er-open">+'+a.dias+'d</span>';
+  if(a.estado==="pend")  return '<span class="er-chip er-pend">pendente</span>';
+  return '<span class="er-chip er-na">—</span>';
+}
+function _estReportRows(){
+  const arr=(typeof esteiraFiltrados==="function"?esteiraFiltrados():projetosImplantacao());
+  const hoje=_estHoje();
+  const atvEtapa={}; (REG.atividades||[]).forEach(a=>{ if(a.etapa) atvEtapa[a.nome]=a.etapa; });
+  // realizado mais antigo por (projeto, etapa) — varre o DATA em memória (janela atual)
+  const realPE={};
+  Object.keys(DATA).forEach(k=>{
+    const r=DATA[k]; if(!r||!r.cliente||!r.atividade) return;
+    const et=atvEtapa[r.atividade]; if(!et) return;
+    const m=k.match(/\d{4}-\d{2}-\d{2}/); if(!m) return; const iso=m[0];
+    const proj=_normProj(r.cliente);
+    (realPE[proj]=realPE[proj]||{});
+    if(!realPE[proj][et]||iso<realPE[proj][et]) realPE[proj][et]=iso;
+  });
+  const rows=arr.map(p=>{
+    if(typeof _pvRecalcChain==="function"){ try{_pvRecalcChain(p);}catch(e){} }
+    const eid=etapaEfetivaDe(p);
+    let prevEt="", realEt="";
+    if(eid==="golive"){ prevEt=p.goLiveAjustado||p.goLivePrevisto||""; realEt=p.goLiveRealizado||""; }
+    else if(eid){
+      (p.previstoLinhas||[]).forEach(l=>{ const et=atvEtapa[l.atv]; if(et===eid&&l.ini&&(!prevEt||l.ini<prevEt)) prevEt=l.ini; });
+      realEt=(realPE[_normProj(p.nome)]||{})[eid]||"";
+    }
+    const atrasoEt=_estRepAtraso(prevEt, realEt, hoje);
+    const glBase=p.goLiveAjustado||p.goLivePrevisto||"";
+    const glReal=p.goLiveRealizado||"";
+    const atrasoGl=_estRepAtraso(glBase, glReal, hoje);
+    const worst=Math.max(_estRepPeso(atrasoEt), _estRepPeso(atrasoGl));
+    return {p, eid, prevEt, realEt, atrasoEt, glBase, glReal, atrasoGl, worst};
+  });
+  rows.sort((a,b)=> (b.worst-a.worst) || (a.p.nome||"").localeCompare(b.p.nome||"","pt"));
+  return rows;
+}
+function _estReportHTML(){
+  const rows=_estReportRows();
+  const stageCor={
+    discovery:'#EA580C', cadastros:'#F26C20', logistica:'#F59E0B', backoffice:'#5B6EE1',
+    pre_golive:'#0EA5E9', golive:'#16A34A', hypercare:'#8B5CF6', monitoramento:'#0F766E',
+    frota:'#475569', sustentacao:'#64748B'
+  };
+  const isLate=a=>(a&&(a.estado==="warn"||a.estado==="bad"||a.estado==="aberto"));
+  const total=rows.length;
+  const atrasados=rows.filter(r=>isLate(r.atrasoEt)||isLate(r.atrasoGl)).length;
+  const noPrazo=total-atrasados;
+  const now=new Date();
+  const pad=n=>String(n).padStart(2,"0");
+  const ger=pad(now.getDate())+"/"+pad(now.getMonth()+1)+"/"+now.getFullYear()+" "+pad(now.getHours())+":"+pad(now.getMinutes());
+  const periodo=(estPeriodoDe||estPeriodoAte)?("Período da etapa: "+(estPeriodoDe?_estFmt(estPeriodoDe):"—")+" até "+(estPeriodoAte?_estFmt(estPeriodoAte):"—")):"Todos os períodos";
+  const filtros=[];
+  if(estSearch) filtros.push('busca "'+enc(estSearch)+'"');
+  if(estFilterEtapa) filtros.push("etapa "+enc(estFilterEtapa==="_none"?"não iniciado":(ETAPA_BY_ID[estFilterEtapa]?ETAPA_BY_ID[estFilterEtapa].label:estFilterEtapa)));
+  if(estFilterStatus) filtros.push("situação "+enc(estFilterStatus));
+  const filtroTxt=filtros.length?(" · filtros: "+filtros.join(" · ")):"";
+  const trs=rows.map((r,i)=>{
+    const p=r.p;
+    const cor=stageCor[r.eid]||'#94A3B8';
+    const etLabel=r.eid?((ETAPA_BY_ID[r.eid]&&ETAPA_BY_ID[r.eid].label)||r.eid):"Não iniciado";
+    const sub=[p.segmentacao, p.gp].filter(Boolean).map(enc).join(" · ");
+    const glD=_estFmt(r.glReal||r.glBase);
+    const glTag=r.glReal?"real.":(r.glBase?"prev.":"");
+    return '<tr>'+
+      '<td class="er-num">'+(i+1)+'</td>'+
+      '<td class="er-proj"><div class="er-pn">'+enc(p.nome||"—")+'</div>'+(sub?'<div class="er-ps">'+sub+'</div>':"")+'</td>'+
+      '<td><span class="er-stage" style="--erc:'+cor+'">'+enc(etLabel)+'</span></td>'+
+      '<td class="er-situ">'+enc(p.status||"Em andamento")+'</td>'+
+      '<td class="er-dt">'+_estFmt(r.prevEt)+'</td>'+
+      '<td class="er-dt">'+_estFmt(r.realEt)+'</td>'+
+      '<td class="er-c">'+_estRepChip(r.atrasoEt)+'</td>'+
+      '<td class="er-gl"><span class="er-gl-d">'+glD+'</span>'+(glTag?'<span class="er-gl-t">'+glTag+'</span>':"")+_estRepChip(r.atrasoGl)+'</td>'+
+    '</tr>';
+  }).join("");
+  const kpi=(n,l,cls)=>'<div class="er-kpi '+(cls||"")+'"><div class="er-kpi-n">'+n+'</div><div class="er-kpi-l">'+l+'</div></div>';
+  const legenda='<div class="er-legend"><b>Atraso</b> (previsto × realizado): <span class="er-chip er-ok">≤0</span> no prazo · <span class="er-chip er-warn">1–7d</span> · <span class="er-chip er-bad">&gt;7d</span> · <span class="er-chip er-open">em aberto</span> não realizado e vencido · <span class="er-chip er-pend">pendente</span> · <span class="er-chip er-na">—</span> sem previsto</div>';
+  return '<div class="estrep">'+
+    '<div class="er-head">'+
+      '<div class="er-h-l"><img class="er-logo" src="'+NSTECH_LOGO_DATAURI+'" alt="nstech"><div><div class="er-h-t">Situação dos Projetos</div><div class="er-h-s">Esteira · estágio atual e atraso previsto × realizado</div></div></div>'+
+      '<div class="er-h-r"><div class="er-meta">'+enc(periodo)+filtroTxt+'</div><div class="er-kpis">'+kpi(total,"Projetos")+kpi(noPrazo,"No prazo","ok")+kpi(atrasados,"Atrasados",atrasados?"bad":"")+'</div></div>'+
+    '</div>'+
+    legenda+
+    '<table class="er-tab"><thead><tr>'+
+      '<th class="er-num">#</th><th>Projeto</th><th>Etapa atual</th><th>Situação</th>'+
+      '<th>Prev. etapa</th><th>Real. etapa</th><th>Atraso etapa</th><th>Go-Live</th>'+
+    '</tr></thead><tbody>'+(trs||'<tr><td colspan="8" class="er-empty">Nenhum projeto encontrado com os filtros atuais.</td></tr>')+'</tbody></table>'+
+    '<div class="er-foot"><span>Gerado em '+ger+' · NS ALOC v'+enc(versaoAtual())+'</span><span>'+total+' projeto'+(total===1?"":"s")+'</span></div>'+
+  '</div>';
+}
+function gerarRelatorioEsteira(){
+  if(!canViewAction("esteira")){ alert("Você não tem acesso à Esteira de Projetos."); return; }
+  const host=el("estReport"); if(!host){ window.print(); return; }
+  host.innerHTML=_estReportHTML();
+  document.body.classList.add("estRepPrinting");
+  const cleanup=()=>{ document.body.classList.remove("estRepPrinting"); host.innerHTML=""; window.removeEventListener("afterprint",cleanup); };
+  window.addEventListener("afterprint",cleanup);
+  setTimeout(()=>{ try{ window.print(); }catch(e){ console.warn("[esteira] relatório:",e); cleanup(); } }, 60);
+}
+
 
 function bindEsteiraInputs(){
   const scope=el("estBody"); if(!scope)return;
