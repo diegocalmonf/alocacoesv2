@@ -1711,7 +1711,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.100.0";
+const APP_VERSION = "1.100.1";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -11122,7 +11122,10 @@ function _estReportHTML(){
 }
 function gerarRelatorioEsteira(){
   if(!canViewAction("esteira")){ alert("Você não tem acesso à Esteira de Projetos."); return; }
-  const host=el("estReport"); if(!host){ window.print(); return; }
+  // Host de impressão: cria sob demanda se o index.html não tiver o #estReport
+  // (evita cair em window.print() puro, que ficaria em branco por causa das regras de print das Atas).
+  let host=el("estReport");
+  if(!host){ host=document.createElement("div"); host.id="estReport"; host.setAttribute("aria-hidden","true"); document.body.appendChild(host); }
   host.innerHTML=_estReportHTML();
   document.body.classList.add("estRepPrinting");
   const cleanup=()=>{ document.body.classList.remove("estRepPrinting"); host.innerHTML=""; window.removeEventListener("afterprint",cleanup); };
