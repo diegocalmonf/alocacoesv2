@@ -1711,7 +1711,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.99.0";
+const APP_VERSION = "1.99.1";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -3149,15 +3149,15 @@ function openAlloc(nomeOuIso,isoOuSlot,slotOuUndef){
         if(ex){ ataBtn.style.display=""; ataBtn.innerHTML='<i data-lucide="file-text"></i>Visualizar ATA'; }
         else if(exigeAta){ ataBtn.style.display=""; ataBtn.innerHTML='<i data-lucide="file-signature"></i>Gerar ATA'; }
         else { ataBtn.style.display="none"; }
+        // Refina também o painel de ocorrências: com o cache do mês carregado,
+        // os botões ATA das extras passam de "Gerar" para "Visualizar" onde já há ata.
+        if(podeAlterar) _injetarPainelOcorrencias(nome, iso, slotBase(slot));
         lucideRefresh();
       });
     }
   }
   // Painel multi-atividade (Fase 2): lista de ocorrências do slot + "Adicionar atividade".
-  if(podeAlterar){
-    const ph=_painelOcorrenciasHTML(nome, iso, slotBase(slot));
-    if(ph){ el("consultBody").innerHTML += ph; _bindPainelOcorrencias(nome, iso, slotBase(slot)); }
-  }
+  if(podeAlterar) _injetarPainelOcorrencias(nome, iso, slotBase(slot));
   el("overlay").classList.add("open");
   _bindTarefasSlot(nome, iso, slot);
   lucideRefresh();
@@ -3226,7 +3226,14 @@ function _painelOcorrenciasHTML(nome, iso, base){
     }
     const editBtn=`<button class="btn small occ-edit" data-occ="${o.occ}" title="Alterar esta atividade"><i data-lucide="pencil"></i></button>`;
     const libBtn =`<button class="btn small occ-lib" data-occ="${o.occ}" title="Liberar esta atividade"><i data-lucide="trash-2"></i></button>`;
-    return `<div class="occ-row"><span class="occ-n">${o.occ}ª</span><span class="occ-desc">${desc}</span>${editBtn}${libBtn}</div>`;
+    // ATA por ocorrência (v1.99.1): aparece quando a atividade exige ata OU já existe ata p/ o token.
+    const _atv=(typeof atividadeObj==="function")?atividadeObj(o.r.atividade):null;
+    const _exige=!!(_atv&&_atv.exigeAta);
+    const _temAta=(typeof _ataDoSlot==="function")?!!_ataDoSlot(o.tok):false;
+    const ataBtn=((typeof canViewAction==="function"&&canViewAction("atas")) && (_exige||_temAta))
+      ? `<button class="btn small occ-ata" data-occ="${o.occ}" title="${_temAta?"Visualizar ATA":"Gerar ATA"}"><i data-lucide="${_temAta?"file-text":"file-signature"}"></i></button>`
+      : "";
+    return `<div class="occ-row"><span class="occ-n">${o.occ}ª</span><span class="occ-desc">${desc}</span>${ataBtn}${editBtn}${libBtn}</div>`;
   }).join("");
   const addBtn = podeAdd
     ? `<button class="btn small occ-add" data-occ="${livre}"><i data-lucide="plus"></i> Adicionar atividade (${occs.length}/${SLOT_MAX_OCC})</button>`
@@ -3242,12 +3249,26 @@ function _bindPainelOcorrencias(nome, iso, base){
     closeAlloc();
     openIncluirAloc({analista:nome, iso, slot:base, extraTok:tok, extraEdit:true, prefill:DATA[key(nome,iso,tok)]||null});
   }));
+  body.querySelectorAll(".occ-ata").forEach(b=>b.addEventListener("click",()=>{
+    const occ=+b.dataset.occ, tok=slotTok(base,occ);
+    closeAlloc();
+    openAta(nome, iso, tok);   // openAta monta o slotKey com o token → ata da ocorrência
+  }));
   const add=body.querySelector(".occ-add");
   if(add) add.addEventListener("click",()=>{
     const occ=+add.dataset.occ;
     closeAlloc();
     openIncluirAloc({analista:nome, iso, slot:base, extraTok:slotTok(base,occ), prefill:null});
   });
+}
+// Injeta (ou re-injeta) o painel de ocorrências ao fim do corpo do modal de consulta.
+// Remove qualquer painel anterior antes de re-renderizar — usado também no refino
+// assíncrono das atas (quando o cache do mês chega e os rótulos Gerar→Visualizar mudam).
+function _injetarPainelOcorrencias(nome, iso, base){
+  const body=el("consultBody"); if(!body) return;
+  const old=body.querySelector(".occ-panel"); if(old) old.remove();
+  const ph=_painelOcorrenciasHTML(nome, iso, base);
+  if(ph){ body.insertAdjacentHTML("beforeend", ph); _bindPainelOcorrencias(nome, iso, base); lucideRefresh(); }
 }
 
 /* ===================== Atas · tela de geração/consulta (Fase 2) =====================
@@ -3318,7 +3339,7 @@ function _renderAtaForm(nome, iso, slot, ata){
     podeEditar};
 
   el("ataTitle").innerHTML=`<i data-lucide="file-signature"></i>ATA · ${enc(cliente||atividade||"slot")}`;
-  el("ataSub").textContent=`${nome} · ${dataFmt} · ${slot} · ${horario}`;
+  el("ataSub").textContent=`${nome} · ${dataFmt} · ${slotLabel(slot)} · ${horario}`;
 
   const contatos=(projCad&&Array.isArray(projCad.contatosCliente))?projCad.contatosCliente.filter(c=>c.ativo!==false&&c.email):[];
   const jaSug=(ata&&Array.isArray(ata.emailsSugeridos))?ata.emailsSugeridos:null;
