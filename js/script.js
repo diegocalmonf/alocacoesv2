@@ -1711,7 +1711,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.99.1";
+const APP_VERSION = "1.99.2";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -3401,8 +3401,8 @@ function _renderAtaForm(nome, iso, slot, ata){
       <div id="ataParticipantes">${_participantesRowsHTML(_ataCtx.participantes, podeEditar)}</div>
       ${podeEditar?`<button class="btn small" id="ataAddParticipante" type="button"><i data-lucide="user-plus"></i>Adicionar participante</button>`:""}
     </div>
-    <div class="ata-sec"><label class="ata-lbl">Tarefas do slot <span class="lbl-soft">· do cronograma deste dia</span></label>
-      ${tarefasSlot.length?`<ul class="ata-tarefas">${tarefasSlot.map(t=>`<li>${enc(t)}</li>`).join("")}</ul>`:`<div class="hint" style="padding:6px 8px">Nenhuma tarefa do cronograma para este slot/dia.</div>`}</div>
+    ${tarefasSlot.length?`<div class="ata-sec"><label class="ata-lbl">Tarefas do slot <span class="lbl-soft">· do cronograma deste dia</span></label>
+      <ul class="ata-tarefas">${tarefasSlot.map(t=>`<li>${enc(t)}</li>`).join("")}</ul></div>`:""}
     <div class="ata-sec"><label class="ata-lbl">Tarefas Executadas</label>
       <textarea id="ataTarefas" rows="4" placeholder="Descreva as tarefas executadas no atendimento..." ${ro}>${val("tarefasExecutadas")}</textarea></div>
     <div class="ata-sec"><label class="ata-lbl">Pendências Apresentadas</label>
@@ -3528,9 +3528,9 @@ function _ataPrintHTML(a){
   const parts=(a.participantes&&a.participantes.length)
     ? `<table class="apr-ptc"><thead><tr><th>Participante</th><th>Cargo</th><th>Empresa</th></tr></thead><tbody>${a.participantes.map(p=>`<tr><td>${enc(p.nome||"—")}</td><td>${enc(p.cargo||"—")}</td><td>${enc(p.empresa||"—")}</td></tr>`).join("")}</tbody></table>`
     : `<div class="apr-v">—</div>`;
-  const tarSlot=(a.tarefasSlot&&a.tarefasSlot.length)
-    ? `<ul class="apr-tarefas">${a.tarefasSlot.map(t=>`<li>${enc(t)}</li>`).join("")}</ul>`
-    : `<div class="apr-v">—</div>`;
+  const tarSlotSec=(a.tarefasSlot&&a.tarefasSlot.length)
+    ? `<div class="apr-ptc-sec"><div class="apr-l">Tarefas do slot (cronograma)</div><ul class="apr-tarefas">${a.tarefasSlot.map(t=>`<li>${enc(t)}</li>`).join("")}</ul></div>`
+    : "";
   return `
   <div class="apr-doc">
     <div class="apr-head">
@@ -3548,7 +3548,7 @@ function _ataPrintHTML(a){
       ${campo("Status", a.envioConfirmado?"Enviada":"Impressa")}
     </div>
     <div class="apr-ptc-sec"><div class="apr-l">Participantes</div>${parts}</div>
-    <div class="apr-ptc-sec"><div class="apr-l">Tarefas do slot (cronograma)</div>${tarSlot}</div>
+    ${tarSlotSec}
     <div class="apr-block">
       ${campo("Tarefas Executadas", a.tarefasExecutadas, true)}
       ${campo("Pendências Apresentadas", a.pendenciasApresentadas, true)}
