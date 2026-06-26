@@ -1682,7 +1682,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.95.2";
+const APP_VERSION = "1.96.1";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -5221,6 +5221,16 @@ function _pvIntervalo(ini, fim){ if(!ini) return "—"; const a=fmtDM(parseISO(i
 function _pvIntervaloAno(ini, fim){ if(!ini) return "—"; const a=`${fmtDM(parseISO(ini))}/${parseISO(ini).getFullYear()}`; if(!fim||fim===ini) return a; return `${a} – ${fmtDM(parseISO(fim))}/${parseISO(fim).getFullYear()}`; }
 function _pvBaseTarefa(p, lineId, tnome){ const bl=_baselineLinhaPorId(p,lineId); if(!bl||!Array.isArray(bl.tarefas))return null; return bl.tarefas.find(x=>x&&x.nome===tnome)||null; }
 function _pvRealTarefa(t){ return (t&&t.exec&&t.exec.status==="realizada"&&t.exec.iso)?t.exec.iso:""; }
+function _crgStatusAtiv(l, tl, hoje, feitas, totalT){
+  if(!totalT) return {k:"neu", txt:"Prevista"};
+  if(feitas===totalT) return {k:"ok", txt:"Feita"};
+  let anyWarn=false, anyBad=false;
+  tl.forEach(t=>{ const s=_pvStatusTarefa(l,t,hoje).k; if(s==="warn")anyWarn=true; else if(s==="bad")anyBad=true; });
+  if(anyWarn) return {k:"warn", txt:"Vencida"};
+  if(anyBad)  return {k:"bad",  txt:"Não feita"};
+  if(feitas>0) return {k:"and", txt:"Em andamento"};
+  return {k:"neu", txt:"Prevista"};
+}
 function _pvStatusTarefa(l, t, hoje){
   const st=t.exec&&t.exec.status;
   if(st==="realizada") return {k:"ok",  txt:"Feita"};
@@ -5280,69 +5290,73 @@ function _renderPrevLinhas(){
       ? `<select class="pvx-slot" data-id="${enc(l.id)}"><option value="">—</option>${slotsLista.map(s=>`<option value="${s.id}" ${s.id===l.slot?"selected":""}>${s.id}</option>`).join("")}</select>`
       : (l.slot?`<span class="slot-tag">${enc(l.slot)}</span>`:'<span class="pvx-defina">—</span>');
     const temBase=!!(baseL&&baseL.ini);
-    const lapisBtn=podeEd?` <button class="pvx-edit" data-tg="ini-${idx}" title="Ajustar início/término manualmente">✏️</button>`:"";
-    const edBoxAtiv=podeEd?`<span class="pvx-edbox" id="edbox-ini-${idx}" style="display:none"><input type="date" class="pvx-ini" data-idx="${idx}" value="${enc(l.ini||"")}"> → <input type="date" class="pvx-fim" data-idx="${idx}" min="${enc(l.ini||"")}" value="${enc(l.fim||"")}"></span>`:"";
-    // Sem reagendamento (sem baseline), a data do plano É o previsto e fica editável; Reagendado = "—".
-    // Com baseline, Previsto = original (read-only) e Reagendado = vigente (editável).
-    const prevCellAtiv=temBase
-      ? `<span class="dval prev">${_pvIntervaloAno(baseL.ini, baseL.fim)}</span>`
-      : `<span class="dval prev">${_pvIntervaloAno(l.ini, l.fim)}${lapisBtn}</span>${edBoxAtiv}`;
-    const reagCellAtiv=temBase
+    const hasTar=tl.length>0;
+    const prevIni=temBase?baseL.ini:l.ini, prevFim=temBase?baseL.fim:l.fim;
+    // edição inline (mantém ids/inputs originais p/ os binds existentes)
+    const lapisBtn=podeEd?` <button class="pvx-edit crg-pencil" data-tg="ini-${idx}" title="Ajustar início/término">✏️</button>`:"";
+    const edBoxAtiv=podeEd?`<span class="pvx-edbox crg-edbox" id="edbox-ini-${idx}" style="display:none"><input type="date" class="pvx-ini" data-idx="${idx}" value="${enc(l.ini||"")}"> → <input type="date" class="pvx-fim" data-idx="${idx}" min="${enc(l.ini||"")}" value="${enc(l.fim||"")}"></span>`:"";
+    // Sem baseline: previsto editável (✏️ no fim). Com baseline: previsto read-only e reagendado editável.
+    const cPrevIni=`<span class="dval prev">${_pvDmAno(prevIni)}</span>`;
+    const cPrevFim=temBase
+      ? `<span class="dval prev">${_pvDmAno(prevFim)}</span>`
+      : `<span class="dval prev">${_pvDmAno(prevFim)}${lapisBtn}</span>${edBoxAtiv}`;
+    const cReag=temBase
       ? `<span class="dval reag">${_pvIntervaloAno(l.ini, l.fim)} ${reagTag}${lapisBtn}</span>${edBoxAtiv}`
       : `<span class="dval none">—</span>`;
-    const distBtn=(podeEd&&l.ini&&l.fim)?`<button class="pvt-dist link-dist" data-li="${idx}" title="Espalha as tarefas pelos dias úteis da atividade"><i data-lucide="wand-2"></i> Distribuir</button>`:"";
-    const tbody=tl.length?tl.map((t,tj)=>{
+    const cReal=`<span class="dval ${realAtiv?"real":"none"}">${realAtiv||"— a realizar"}</span>`;
+    const distBtn=(podeEd&&l.ini&&l.fim)?`<button class="pvt-dist crg-iact" data-li="${idx}" title="Distribuir tarefas pelos dias úteis"><i data-lucide="wand-2"></i></button>`:"";
+    const aStatus=_crgStatusAtiv(l, tl, hoje, feitas, totalT);
+    // ---- linhas-filhas (tarefas) ----
+    const tbody=hasTar?tl.map((t,tj)=>{
       const bt=_pvBaseTarefa(p, l.id, t.nome);
       const stt=_pvStatusTarefa(l, t, hoje);
       const real=_pvRealTarefa(t);
       const podeMarcar=podeEd&&l.an&&l.slot;
       const acoes = stt.k==="ok"
-        ? (podeMarcar?`<button class="tk-undo mini undo" data-li="${idx}" data-tn="${enc(t.nome)}">Desfazer</button>`:"")
-        : (podeMarcar?`<button class="tk-do mini do" data-li="${idx}" data-tn="${enc(t.nome)}">Marcar feita</button><button class="tk-no mini no" data-li="${idx}" data-tn="${enc(t.nome)}">Não feita</button>`:"");
-      const movecol=podeEd?`<span class="tk-move"><button class="pvt-up" data-li="${idx}" data-tn="${enc(t.nome)}" title="Subir"${tj===0?" disabled":""}>↑</button><button class="pvt-dn" data-li="${idx}" data-tn="${enc(t.nome)}" title="Descer"${tj===tl.length-1?" disabled":""}>↓</button></span>`:"";
-      const delBtn=podeEd?`<button class="pvt-del tk-del" data-li="${idx}" data-tn="${enc(t.nome)}" title="${t.manual?"Remover tarefa avulsa":"Ocultar tarefa do catálogo (reinclua para trazer de volta)"}">×</button>`:"";
+        ? (podeMarcar?`<button class="tk-undo crg-iact" data-li="${idx}" data-tn="${enc(t.nome)}" title="Desfazer"><i data-lucide="rotate-ccw"></i></button>`:"")
+        : (podeMarcar?`<button class="tk-do crg-iact do" data-li="${idx}" data-tn="${enc(t.nome)}" title="Marcar feita"><i data-lucide="check"></i></button><button class="tk-no crg-iact" data-li="${idx}" data-tn="${enc(t.nome)}" title="Não feita"><i data-lucide="x"></i></button>`:"");
+      const moveT=podeEd?`<button class="pvt-up crg-iact" data-li="${idx}" data-tn="${enc(t.nome)}" title="Subir"${tj===0?" disabled":""}><i data-lucide="chevron-up"></i></button><button class="pvt-dn crg-iact" data-li="${idx}" data-tn="${enc(t.nome)}" title="Descer"${tj===tl.length-1?" disabled":""}><i data-lucide="chevron-down"></i></button>`:"";
+      const delT=podeEd?`<button class="pvt-del crg-iact danger" data-li="${idx}" data-tn="${enc(t.nome)}" title="${t.manual?"Remover tarefa avulsa":"Ocultar tarefa do catálogo (reinclua para trazer de volta)"}"><i data-lucide="trash-2"></i></button>`:"";
       const temBaseT=!!(bt&&bt.ini);
-      const tedit=podeEd?` <button class="pvt-edit" data-tg="t-${idx}-${tj}" title="Ajustar datas da tarefa">✏️</button>`:"";
-      const tEdBox=podeEd?`<span class="pvt-edbox" id="edbox-t-${idx}-${tj}" style="display:none"><input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||"")}" max="${enc(l.fim||"")}"> → <input type="date" class="pvt-fim" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.fim)}" min="${enc(t.ini||l.ini||"")}" max="${enc(l.fim||"")}"></span>`:"";
-      let prevTd, reagTd;
-      if(!t.complete){ prevTd='<span class="cell-date none">sem data</span>'; reagTd='<span class="cell-date none">—</span>'; }
-      else if(temBaseT){ prevTd=`<span class="cell-date prev">${_pvIntervalo(bt.ini, bt.fim)}</span>`; reagTd=`<span class="cell-date reag">${_pvIntervalo(t.ini, t.fim)}</span>${tedit}${tEdBox}`; }
-      else { prevTd=`<span class="cell-date prev">${_pvIntervalo(t.ini, t.fim)}${tedit}</span>${tEdBox}`; reagTd='<span class="cell-date none">—</span>'; }
-      return `<tr${t.foraJanela?' class="tk-forajan"':""}>
-        <td data-l="Tarefa"><div class="tk-name">${movecol}<span class="tk-num">${idx+1}.${t.num}</span><span class="tk-lbl" title="${enc(t.nome)}">${enc(t.nome)}</span>${t.manual?'<span class="tk-tagm">avulsa</span>':""}${t.foraJanela?'<span class="pvt-flag" title="Fora da janela da atividade">!</span>':""}${delBtn}</div></td>
-        <td data-l="Previsto">${prevTd}</td>
-        <td data-l="Reagendado">${reagTd}</td>
-        <td data-l="Realizado"><span class="cell-date ${real?"real":"none"}">${real?_pvDm(real):"—"}</span></td>
-        <td data-l="Status"><span class="pill ${stt.k}"><i></i> ${stt.txt}</span></td>
-        <td data-l="Ação"><div class="tk-acts">${acoes}</div></td>
+      const tedit=podeEd?`<button class="pvt-edit crg-pencil" data-tg="t-${idx}-${tj}" title="Ajustar datas da tarefa">✏️</button>`:"";
+      const tEdBox=podeEd?`<span class="pvt-edbox crg-edbox" id="edbox-t-${idx}-${tj}" style="display:none"><input type="date" class="pvt-ini" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.ini)}" min="${enc(l.ini||"")}" max="${enc(l.fim||"")}"> → <input type="date" class="pvt-fim" data-li="${idx}" data-tn="${enc(t.nome)}" value="${enc(t.fim)}" min="${enc(t.ini||l.ini||"")}" max="${enc(l.fim||"")}"></span>`:"";
+      const tPrevIni=temBaseT?bt.ini:t.ini, tPrevFim=temBaseT?bt.fim:t.fim;
+      let tPi, tPf, tReag;
+      if(!t.complete){ tPi='<span class="dval none">sem data</span>'; tPf='<span class="dval none">—</span>'; tReag='<span class="dval none">—</span>'; }
+      else if(temBaseT){ tPi=`<span class="dval prev">${_pvDmAno(tPrevIni)}</span>`; tPf=`<span class="dval prev">${_pvDmAno(tPrevFim)}</span>`; tReag=`<span class="dval reag">${_pvIntervalo(t.ini, t.fim)}</span>${tedit}${tEdBox}`; }
+      else { tPi=`<span class="dval prev">${_pvDmAno(tPrevIni)}</span>`; tPf=`<span class="dval prev">${_pvDmAno(tPrevFim)}${tedit}</span>${tEdBox}`; tReag='<span class="dval none">—</span>'; }
+      return `<tr class="crg-task crg-child-${idx}${t.foraJanela?' crg-forajan':''}" style="display:none">
+        <td class="crg-c-name"><div class="crg-tname"><span class="crg-twbs mono">${idx+1}.${t.num}</span><span class="crg-tlbl" title="${enc(t.nome)}">${enc(t.nome)}</span>${t.manual?'<span class="crg-tag avulsa">avulsa</span>':""}${t.foraJanela?'<span class="crg-flag" title="Fora da janela da atividade">!</span>':""}${delT}</div></td>
+        <td class="crg-c-resp"><span class="crg-herda">↳ herda</span></td>
+        <td class="crg-c-d">${tPi}</td>
+        <td class="crg-c-d">${tPf}</td>
+        <td class="crg-c-d">${tReag}</td>
+        <td class="crg-c-d"><span class="dval ${real?"real":"none"}">${real?_pvDmAno(real):"—"}</span></td>
+        <td class="crg-c-st"><span class="crg-pill ${stt.k}"><i></i> ${stt.txt}</span></td>
+        <td class="crg-c-prog"><span class="crg-dash">—</span></td>
+        <td class="crg-c-act"><div class="crg-acts">${acoes}${moveT}</div></td>
       </tr>`;
-    }).join(""):`<tr><td colspan="6" class="tk-empty">Sem tarefas nesta atividade.</td></tr>`;
-    const tarefasTbl=`<table class="tk-tbl"><thead><tr><th>Tarefa</th><th class="c-date">Previsto</th><th class="c-date">Reagendado</th><th class="c-date">Realizado</th><th class="c-st">Status</th><th class="c-act">Ação${distBtn}</th></tr></thead><tbody>${tbody}</tbody></table>`;
-    const acts=podeEd?`<button class="pvx-reag btn-reag" data-id="${enc(l.id)}" title="Reagendar a partir desta atividade (cascata)">⟳ Reagendar</button><button class="iconbtn pvx-up" data-id="${enc(l.id)}" title="Subir">↑</button><button class="iconbtn pvx-dn" data-id="${enc(l.id)}" title="Descer">↓</button><button class="iconbtn cr-danger pvx-del" data-id="${enc(l.id)}" title="Remover atividade">🗑</button>`:"";
-    return `<div class="cr-act${flagged.has(idx)?" warnjan":""}${planoOnly?" act-plano":""}">
-      <div class="act-head">
-        <div class="act-num">${idx+1}</div>
-        <div class="act-main">
-          <div class="act-title">${enc(l.atv)}${planoOnly?'<span class="pvx-plano-tag">só plano</span>':""}</div>
-          <div class="act-meta">${anCell} ${slotCell} · ${l.slots||0} dia(s) úteis</div>
-          <div class="act-dates">
-            <div class="dpair"><span class="dl">Previsto</span>${prevCellAtiv}</div>
-            <span class="arrow">→</span>
-            <div class="dpair"><span class="dl">Reagendado</span>${reagCellAtiv}</div>
-            <span class="arrow">→</span>
-            <div class="dpair"><span class="dl">Realizado</span><span class="dval ${realAtiv?"real":"none"}">${realAtiv||"— a realizar"}</span></div>
-          </div>
-        </div>
-        <div class="act-right">
-          <div class="cr-prog"><span class="cr-lbl">${feitas}/${totalT} feitas</span><div class="cr-bar"><i style="width:${pct}%"></i></div></div>
-          <div class="act-acts">${acts}</div>
-        </div>
-      </div>
-      ${tarefasTbl}
-      ${flagged.has(idx)?`<div class="jan-warn"><i data-lucide="alert-triangle"></i> Sobreposição de datas com outra atividade do mesmo analista/slot — ao aplicar, a 1ª prevalece em cada dia.</div>`:""}
-    </div>`;
+    }).join(""):"";
+    const acts=podeEd?`<button class="pvx-reag crg-iact" data-id="${enc(l.id)}" title="Reagendar a partir desta atividade (cascata)"><i data-lucide="rotate-cw"></i></button>${distBtn}<button class="pvx-up crg-iact" data-id="${enc(l.id)}" title="Subir"><i data-lucide="chevron-up"></i></button><button class="pvx-dn crg-iact" data-id="${enc(l.id)}" title="Descer"><i data-lucide="chevron-down"></i></button><button class="pvx-del crg-iact danger" data-id="${enc(l.id)}" title="Remover atividade"><i data-lucide="trash-2"></i></button>`:"";
+    const chev=hasTar?`<span class="crg-chev"><i data-lucide="chevron-right"></i></span>`:`<span class="crg-chev empty"></span>`;
+    const planoTag=planoOnly?`<span class="crg-tag plano">só plano</span>`:"";
+    const warnIco=flagged.has(idx)?`<span class="crg-flag" title="Sobreposição de datas com outra atividade do mesmo analista/slot — ao aplicar, a 1ª prevalece em cada dia.">⚠</span>`:"";
+    const actRow=`<tr class="crg-act collapsed${planoOnly?" crg-plano":""}" data-ai="${idx}">
+        <td class="crg-c-name"><div class="crg-aname">${chev}<span class="crg-wbs mono">${idx+1}</span><span class="crg-albl" title="${enc(l.atv)}">${enc(l.atv)}</span>${planoTag}${warnIco}</div></td>
+        <td class="crg-c-resp">${anCell} ${slotCell}<span class="crg-dias">${l.slots||0} d.u.</span></td>
+        <td class="crg-c-d">${cPrevIni}</td>
+        <td class="crg-c-d">${cPrevFim}</td>
+        <td class="crg-c-d">${cReag}</td>
+        <td class="crg-c-d">${cReal}</td>
+        <td class="crg-c-st"><span class="crg-pill ${aStatus.k}"><i></i> ${aStatus.txt}</span></td>
+        <td class="crg-c-prog"><div class="crg-prog"><span class="crg-plbl">${feitas}/${totalT}</span><div class="crg-bar"><i style="width:${pct}%"></i></div></div></td>
+        <td class="crg-c-act"><div class="crg-acts">${acts}</div></td>
+      </tr>`;
+    return actRow + tbody;
   }).join("");
-  host.innerHTML=_pvInclTarefaBar(p)+legenda+rows;
+  const toolbar=`<div class="crg-toolbar"><button class="btn crg-tb" id="crgExpandAll"><i data-lucide="chevrons-up-down"></i> Expandir tudo</button><button class="btn crg-tb" id="crgCollapseAll"><i data-lucide="chevrons-down-up"></i> Recolher tudo</button><button class="btn crg-tb crg-vergantt" id="crgVerGantt" title="Ver as barras no tempo (Gantt)"><i data-lucide="gantt-chart"></i> Ver no tempo</button><div class="crg-legend"><b>Status</b><span class="crg-l ok"><i></i>Feita</span><span class="crg-l warn"><i></i>Vencida</span><span class="crg-l bad"><i></i>Não feita</span><span class="crg-l and"><i></i>Em andamento</span><span class="crg-l neu"><i></i>Prevista</span></div></div>`;
+  const thead=`<thead><tr><th class="crg-c-name">Atividade / Tarefa</th><th class="crg-c-resp">Resp · Slot</th><th class="crg-c-d">Previsto início</th><th class="crg-c-d">Previsto fim</th><th class="crg-c-d">Reagendado</th><th class="crg-c-d">Realizado</th><th class="crg-c-st">Status</th><th class="crg-c-prog">Progresso</th><th class="crg-c-act">Ações</th></tr></thead>`;
+  host.innerHTML=_pvInclTarefaBar(p)+toolbar+`<div class="crg-scroll"><table class="crg">${thead}<tbody>${rows}</tbody></table></div>`;
 
   { const ab=el("pvtAddBtn"); if(ab)ab.addEventListener("click",()=>{ const sel=el("pvtAtivSel"), nm=el("pvtNome"); if(!sel||!nm)return; if(_pvIncluirTarefa(sel.value, nm.value)){ /* re-render limpa o campo */ } });
     const nm=el("pvtNome"); if(nm)nm.addEventListener("keydown",e=>{ if(e.key==="Enter"){ e.preventDefault(); const sel=el("pvtAtivSel"); if(sel)_pvIncluirTarefa(sel.value, nm.value); } }); }
@@ -5364,6 +5378,14 @@ function _renderPrevLinhas(){
   host.querySelectorAll(".tk-do").forEach(b=>b.addEventListener("click",()=>_pvMarcarTarefaCron(+b.dataset.li,dec(b.dataset.tn),"realizada")));
   host.querySelectorAll(".tk-no").forEach(b=>b.addEventListener("click",()=>_pvMarcarTarefaCron(+b.dataset.li,dec(b.dataset.tn),"nao")));
   host.querySelectorAll(".tk-undo").forEach(b=>b.addEventListener("click",()=>_pvMarcarTarefaCron(+b.dataset.li,dec(b.dataset.tn),"")));
+  // Expand/collapse da grade hierárquica (recolhida por padrão).
+  function _crgToggle(r, open){ r.classList.toggle("collapsed", !open); host.querySelectorAll(".crg-child-"+r.dataset.ai).forEach(tr=>tr.style.display=open?"":"none"); }
+  host.querySelectorAll("tr.crg-act").forEach(r=>{
+    r.addEventListener("click",e=>{ if(e.target.closest("select,input,button,.crg-edbox"))return; _crgToggle(r, r.classList.contains("collapsed")); });
+  });
+  { const ea=el("crgExpandAll"); if(ea)ea.addEventListener("click",()=>host.querySelectorAll("tr.crg-act").forEach(r=>_crgToggle(r,true)));
+    const ca=el("crgCollapseAll"); if(ca)ca.addEventListener("click",()=>host.querySelectorAll("tr.crg-act").forEach(r=>_crgToggle(r,false))); }
+  { const vg=el("crgVerGantt"); if(vg)vg.addEventListener("click",()=>{ if(typeof _cronView!=="undefined"){ _cronView="gantt"; renderCronograma(); } }); }
   const aplicado=p&&p.previstoAplicadoEm;
   const statusHTML=aplicado?`<span class="pvx-status ok">Aplicado em ${enc(String(aplicado).slice(0,16).replace("T"," "))}</span>`:`<span class="pvx-status pend">Pendente de aplicação</span>`;
   const terminoTxt=termino?`${fmtDM(parseISO(termino))}/${parseISO(termino).getFullYear()}`:"—";
@@ -6398,6 +6420,16 @@ function _cronGanttHTML(p){
           <div class="ge-kpi"><div class="ge-l">Esperado até hoje</div><div class="ge-barwrap"><div class="ge-bar ${fracHoje>=0.999?'ok':(fracHoje>=0.7?'warn':'bad')}" style="width:${pct(fracHoje)}%"></div></div><div class="ge-v">${pct(fracHoje)}% <span class="ge-sub">${gPastReal}/${gPastTot} até hoje</span></div></div>
         </div>`
       : `<div class="gantt-evol"><div class="ge-l">Sem slots planejados para medir evolução.</div></div>`);
+  // Legenda de cores das barras (alinha o vocabulário ao da grade: Previsto/Reagendado/Realizado).
+  const corLeg=`<div class="gantt-colorleg">
+    <b>Barras</b>
+    <span class="gcl"><span class="gcl-sw sw-prev"></span> Previsto (baseline)</span>
+    <span class="gcl"><span class="gcl-sw sw-reag"></span> Vigente / reagendado <i class="gcl-note">(cor por atividade)</i></span>
+    <span class="gcl"><span class="gcl-sw sw-real"></span> Realizado (progresso)</span>
+    <span class="gcl"><span class="gcl-sw sw-atras"></span> Atrasada</span>
+    <span class="gcl"><span class="gcl-sw sw-hoje"></span> Hoje</span>
+    <span class="gcl"><span class="gcl-sw sw-golive"></span> Go-Live</span>
+  </div>`;
   return `
     ${baseToolbar}
     <div class="gantt-bar2">${resumoTxt}</div>
@@ -6417,6 +6449,7 @@ function _cronGanttHTML(p){
         </div>
       </div>
     </div></div>
+    ${corLeg}
     ${legenda}
     ${aviso}
     ${orfaNote}`;
