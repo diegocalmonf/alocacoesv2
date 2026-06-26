@@ -455,6 +455,7 @@
         </div>
       </div>
       <button class="btn filtro-aplicar" id="estApplyFilter" type="button"><i data-lucide="filter"></i> Aplicar Filtro</button>
+      <button class="btn est-report-btn" id="estReportBtn" type="button" onclick="gerarRelatorioEsteira()"><i data-lucide="printer"></i> Relatório (1 pág.)</button>
       <div class="est-savehint" id="estSaveHint"><i data-lucide="check"></i>Salvo na nuvem</div>
     </div>
     <div id="estBody" style="flex:1;display:flex;flex-direction:column;min-height:0"></div>
@@ -588,6 +589,7 @@
 <!-- Container de impressão da ATA (Fase 3): preenchido sob demanda; visível só em @media print -->
 <div id="ataPrint" aria-hidden="true"></div>
 <div id="pglPrint" aria-hidden="true"></div>
+<div id="estReport" aria-hidden="true"></div>
 
 <!-- Script no FINAL do body: garante que todo o DOM já existe antes do bind()/init -->
 <script src="./js/script.js"></script>
