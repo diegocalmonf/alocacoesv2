@@ -2297,3 +2297,112 @@ body.viewmode-geral .grid-card[data-editable="1"]{cursor:default !important}
   .tk-tbl tbody td::before{content:attr(data-l);font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--faint);font-weight:700;align-self:center}
   .tk-name,.tk-acts{justify-content:flex-start}
 }
+
+/* ============================================================================
+   Cronograma · grade hierárquica (estilo MS Project) — v1.96  [classes crg-*]
+   Não colide com .cr-* / .tk-* legados. Reusa tokens --fn-*/--o-*/--line*.
+   ============================================================================ */
+.crg-toolbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0 10px}
+.crg-toolbar .btn.crg-tb{padding:6px 11px;font-size:12px}
+.crg-legend{display:flex;align-items:center;gap:13px;margin-left:auto;flex-wrap:wrap;font-size:11.5px;color:var(--fn-muted)}
+.crg-legend b{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--fn-faint);font-weight:700}
+.crg-l{display:inline-flex;align-items:center;gap:6px}
+.crg-l i{width:9px;height:9px;border-radius:50%;display:inline-block}
+.crg-l.ok i{background:var(--fn-teal)} .crg-l.warn i{background:var(--fn-amber)}
+.crg-l.bad i{background:var(--fn-red)} .crg-l.and i{background:var(--fn-blue)} .crg-l.neu i{background:var(--fn-slate)}
+
+.crg-scroll{overflow-x:auto;border:1px solid var(--line2);border-radius:14px;background:#fff}
+table.crg{width:100%;border-collapse:collapse;min-width:1040px;font-size:13px}
+.crg thead th{position:sticky;top:0;z-index:3;background:#fbfaf9;border-bottom:1px solid var(--line2);
+  text-align:left;font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--fn-faint);
+  font-weight:700;padding:9px 12px;white-space:nowrap}
+.crg td{padding:8px 12px;border-bottom:1px solid var(--line);vertical-align:middle;position:relative}
+.crg .crg-c-name{width:30%;min-width:280px}
+.crg .crg-c-resp{width:128px}
+.crg .crg-c-d{width:96px}
+.crg .crg-c-st{width:108px}
+.crg .crg-c-prog{width:118px}
+.crg .crg-c-act{width:138px}
+
+/* linha-pai (atividade) */
+tr.crg-act{background:#fff;cursor:pointer}
+tr.crg-act:hover{background:#fffaf6}
+tr.crg-act>td{border-bottom:1px solid var(--line2)}
+tr.crg-act.crg-plano{background:#fbfbfc}
+.crg-aname{display:flex;align-items:center;gap:9px}
+.crg-chev{width:18px;height:18px;flex:none;display:grid;place-items:center;color:var(--fn-faint)}
+.crg-chev.empty{visibility:hidden}
+.crg-chev svg{width:16px;height:16px;transition:transform .15s}
+tr.crg-act:not(.collapsed) .crg-chev svg{transform:rotate(90deg)}
+.crg-wbs{font-size:11px;color:var(--proj);font-weight:700;min-width:22px;text-align:right}
+.crg-albl{font-weight:700;letter-spacing:-.01em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:340px}
+
+/* linha-filha (tarefa) */
+tr.crg-task{background:#fcfbfa}
+tr.crg-task:hover{background:#f7f5f3}
+tr.crg-task.crg-forajan{background:#fff7f6}
+.crg-tname{display:flex;align-items:center;gap:8px;padding-left:30px}
+.crg-twbs{font-size:10.5px;color:var(--fn-faint);font-weight:600;min-width:30px;text-align:right}
+.crg-tlbl{color:var(--fn-ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:300px}
+.crg-herda{color:var(--fn-faint);font-size:11.5px}
+.crg-dias{display:block;font-size:10.5px;color:var(--fn-faint);margin-top:2px}
+
+.crg-tag{font-size:9.5px;letter-spacing:.03em;text-transform:uppercase;font-weight:700;padding:2px 7px;border-radius:6px;margin-left:2px}
+.crg-tag.plano{background:var(--fn-slate-bg);color:var(--fn-slate);border:1px solid var(--fn-slate-bd)}
+.crg-tag.avulsa{background:var(--fn-purple-bg);color:var(--fn-purple);border:1px solid var(--fn-purple-bd)}
+.crg-flag{display:inline-grid;place-items:center;min-width:16px;height:16px;padding:0 4px;border-radius:5px;
+  background:var(--fn-amber-bg);color:var(--fn-amber);border:1px solid var(--fn-amber-bd);font-size:10px;font-weight:800;margin-left:2px}
+
+/* datas (reusa .dval legado; ajustes leves no contexto da grade) */
+.crg .dval{font-variant-numeric:tabular-nums;font-size:12.5px;white-space:nowrap}
+.crg-dash{color:var(--line3)}
+
+/* progresso */
+.crg-prog{display:flex;align-items:center;gap:8px}
+.crg-plbl{font-size:10.5px;color:var(--fn-faint);font-weight:600;min-width:30px;font-variant-numeric:tabular-nums}
+.crg-bar{flex:1;height:6px;border-radius:99px;background:var(--line);overflow:hidden}
+.crg-bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,var(--o-400),var(--o-500))}
+
+/* status pill */
+.crg-pill{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:3px 9px;border-radius:999px;border:1px solid;white-space:nowrap}
+.crg-pill i{width:7px;height:7px;border-radius:50%;display:inline-block}
+.crg-pill.ok{background:var(--fn-teal-bg);color:var(--fn-teal);border-color:var(--fn-teal-bd)} .crg-pill.ok i{background:var(--fn-teal)}
+.crg-pill.warn{background:var(--fn-amber-bg);color:var(--fn-amber);border-color:var(--fn-amber-bd)} .crg-pill.warn i{background:var(--fn-amber)}
+.crg-pill.bad{background:var(--fn-red-bg);color:var(--fn-red);border-color:var(--fn-red-bd)} .crg-pill.bad i{background:var(--fn-red)}
+.crg-pill.and{background:var(--fn-blue-bg);color:var(--fn-blue);border-color:var(--fn-blue-bd)} .crg-pill.and i{background:var(--fn-blue)}
+.crg-pill.neu{background:var(--fn-slate-bg);color:var(--fn-slate);border-color:var(--fn-slate-bd)} .crg-pill.neu i{background:var(--fn-slate)}
+
+/* ações inline */
+.crg-acts{display:flex;gap:2px;align-items:center}
+.crg-iact{width:26px;height:26px;display:grid;place-items:center;border:1px solid transparent;background:transparent;border-radius:7px;cursor:pointer;color:var(--fn-faint);padding:0}
+.crg-iact:hover{background:#fff;border-color:var(--line2);color:var(--fn-ink)}
+.crg-iact.do:hover{color:var(--fn-teal);border-color:var(--fn-teal-bd);background:var(--fn-teal-bg)}
+.crg-iact.danger:hover{color:var(--fn-red);border-color:var(--fn-red-bd);background:var(--fn-red-bg)}
+.crg-iact[disabled]{opacity:.3;cursor:default}
+.crg-iact svg{width:15px;height:15px}
+.crg-pencil{border:none;background:transparent;cursor:pointer;font-size:12px;padding:0 2px;margin-left:4px;opacity:.7}
+.crg-pencil:hover{opacity:1}
+
+/* popover de edição de datas (toggle abre via display:inline-flex no JS) */
+.crg .crg-edbox{position:absolute;z-index:8;right:8px;top:calc(100% - 4px);display:none;align-items:center;gap:6px;
+  background:#fff;border:1px solid var(--line2);border-radius:9px;padding:7px 9px;box-shadow:0 8px 24px rgba(0,0,0,.14);font-size:12px}
+.crg .crg-edbox input[type=date]{border:1px solid var(--line2);border-radius:7px;padding:5px 7px;font-family:inherit;font-size:12px}
+
+@media (max-width:900px){
+  .crg-legend{width:100%;margin-left:0}
+}
+
+/* Fase 2 (F2-B) · legenda de cores do Gantt + atalho da grade */
+.crg-vergantt{margin-left:6px}
+.gantt-colorleg{display:flex;gap:15px;flex-wrap:wrap;align-items:center;margin:12px 0 2px;font-size:11.5px;color:var(--fn-muted)}
+.gantt-colorleg b{font-size:10px;letter-spacing:.06em;text-transform:uppercase;color:var(--fn-faint);font-weight:700}
+.gantt-colorleg .gcl{display:inline-flex;align-items:center;gap:7px}
+.gantt-colorleg .gcl-note{font-style:normal;color:var(--fn-faint);font-size:10.5px}
+.gcl-sw{width:24px;height:13px;border-radius:4px;display:inline-block;flex:none;box-sizing:border-box}
+.gcl-sw.sw-prev{border:1px dashed #9aa0a6;background:repeating-linear-gradient(45deg,transparent,transparent 4px,rgba(0,0,0,.06) 4px,rgba(0,0,0,.06) 8px)}
+.gcl-sw.sw-reag{background:#c9ccd1}
+.gcl-sw.sw-real{background:#c9ccd1;position:relative;overflow:hidden}
+.gcl-sw.sw-real::after{content:"";position:absolute;inset:0;width:55%;background:rgba(0,0,0,.30)}
+.gcl-sw.sw-atras{background:#c9ccd1;box-shadow:0 0 0 2px #d33a2c inset}
+.gcl-sw.sw-hoje{width:0;height:15px;border-radius:0;border-left:2px dashed #2563eb}
+.gcl-sw.sw-golive{width:0;height:15px;border-radius:0;border-left:2px solid #1f7a3d}
