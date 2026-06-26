@@ -1711,7 +1711,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.100.1";
+const APP_VERSION = "1.100.2";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -11120,17 +11120,67 @@ function _estReportHTML(){
     '<div class="er-foot"><span>Gerado em '+ger+' · NS ALOC v'+enc(versaoAtual())+'</span><span>'+total+' projeto'+(total===1?"":"s")+'</span></div>'+
   '</div>';
 }
+/* CSS self-contained do relatório (vai inline na janela de impressão — não depende do style.css). */
+function _estReportCSS(){
+  return ''
+  +'@page{ size:A4 landscape; margin:10mm; }'
+  +'*{box-sizing:border-box} html,body{margin:0;padding:0;background:#fff}'
+  +".estrep{font-family:'Inter',Arial,Helvetica,sans-serif;color:#14110f;font-size:9px;line-height:1.3;-webkit-print-color-adjust:exact;print-color-adjust:exact}"
+  +'.estrep .er-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:2px solid #E55810;padding-bottom:8px;margin-bottom:8px}'
+  +'.estrep .er-h-l{display:flex;align-items:center;gap:10px}'
+  +'.estrep .er-logo{height:26px;width:auto;display:block}'
+  +'.estrep .er-h-t{font-weight:800;font-size:16px;letter-spacing:-.02em;line-height:1}'
+  +'.estrep .er-h-s{font-size:9.5px;color:#7a736e;margin-top:2px}'
+  +'.estrep .er-h-r{text-align:right;flex:0 0 auto}'
+  +'.estrep .er-meta{font-size:9px;color:#7a736e;margin-bottom:5px}'
+  +'.estrep .er-kpis{display:flex;gap:8px;justify-content:flex-end}'
+  +'.estrep .er-kpi{border:1px solid #e7e2dd;border-radius:8px;padding:4px 10px;min-width:60px;text-align:center;background:#fff}'
+  +'.estrep .er-kpi-n{font-weight:800;font-size:15px;line-height:1}'
+  +'.estrep .er-kpi-l{font-size:8px;text-transform:uppercase;letter-spacing:.07em;color:#9a938d;font-weight:700;margin-top:2px}'
+  +'.estrep .er-kpi.ok .er-kpi-n{color:#16a34a}'
+  +'.estrep .er-kpi.bad .er-kpi-n{color:#c1382b}'
+  +'.estrep .er-legend{font-size:8.5px;color:#6b645f;margin-bottom:7px}'
+  +'.estrep .er-tab{width:100%;border-collapse:collapse;table-layout:fixed}'
+  +'.estrep .er-tab thead{display:table-header-group}'
+  +'.estrep .er-tab thead th{background:#faf6f2;border-bottom:1.5px solid #e7e2dd;text-align:left;padding:5px 6px;font-size:8px;text-transform:uppercase;letter-spacing:.05em;color:#8a827c;font-weight:700}'
+  +'.estrep .er-tab th:nth-child(1){width:22px}.estrep .er-tab th:nth-child(2){width:24%}.estrep .er-tab th:nth-child(3){width:12%}.estrep .er-tab th:nth-child(4){width:10%}.estrep .er-tab th:nth-child(5){width:10%}.estrep .er-tab th:nth-child(6){width:10%}.estrep .er-tab th:nth-child(7){width:9%}'
+  +'.estrep .er-tab tbody td{border-bottom:1px solid #efeae5;padding:4px 6px;vertical-align:top}'
+  +'.estrep .er-tab tbody tr{page-break-inside:avoid}'
+  +'.estrep .er-num{width:22px;text-align:right;color:#b3aca6;font-variant-numeric:tabular-nums}'
+  +'.estrep .er-pn{font-weight:700;font-size:10px;line-height:1.15;color:#14110f}'
+  +'.estrep .er-ps{font-size:8px;color:#8a827c;margin-top:1px}'
+  +'.estrep .er-situ{color:#5a534e}'
+  +'.estrep .er-dt{font-variant-numeric:tabular-nums;color:#3f3a36;white-space:nowrap}'
+  +'.estrep .er-stage{display:inline-block;padding:2px 8px;border-radius:999px;font-weight:700;font-size:8.5px;color:#fff;background:var(--erc,#94a3b8);white-space:nowrap}'
+  +'.estrep .er-c,.estrep .er-gl{white-space:nowrap}'
+  +'.estrep .er-gl-d{font-variant-numeric:tabular-nums;color:#3f3a36}'
+  +'.estrep .er-gl-t{font-size:7.5px;text-transform:uppercase;letter-spacing:.04em;color:#9a938d;font-weight:700;margin:0 3px 0 1px}'
+  +'.estrep .er-chip{display:inline-block;padding:1px 6px;border-radius:6px;font-weight:700;font-size:8px;border:1px solid transparent;white-space:nowrap}'
+  +'.estrep .er-chip.er-ok{background:#ECFDF3;color:#15803D;border-color:#BBF7D0}'
+  +'.estrep .er-chip.er-warn{background:#FFF7E6;color:#B45309;border-color:#FCD9A8}'
+  +'.estrep .er-chip.er-bad{background:#FEECEB;color:#B42318;border-color:#F7C9C4}'
+  +'.estrep .er-chip.er-open{background:#FDE7E1;color:#B23A12;border-color:#F6C0AC}'
+  +'.estrep .er-chip.er-pend{background:#F2F4F7;color:#667085;border-color:#E4E7EC}'
+  +'.estrep .er-chip.er-na{background:transparent;color:#98a2b3;border-color:transparent}'
+  +'.estrep .er-empty{text-align:center;color:#9a938d;padding:18px}'
+  +'.estrep .er-foot{margin-top:8px;padding-top:6px;border-top:1px solid #e7e2dd;font-size:8px;color:#9a938d;display:flex;justify-content:space-between}';
+}
+// Gera o relatório numa JANELA PRÓPRIA e imprime só ela — isolado das regras de @media print do app
+// (Atas/Pré Go-Live/Relatórios). Não depende de host no index.html nem do style.css.
 function gerarRelatorioEsteira(){
   if(!canViewAction("esteira")){ alert("Você não tem acesso à Esteira de Projetos."); return; }
-  // Host de impressão: cria sob demanda se o index.html não tiver o #estReport
-  // (evita cair em window.print() puro, que ficaria em branco por causa das regras de print das Atas).
-  let host=el("estReport");
-  if(!host){ host=document.createElement("div"); host.id="estReport"; host.setAttribute("aria-hidden","true"); document.body.appendChild(host); }
-  host.innerHTML=_estReportHTML();
-  document.body.classList.add("estRepPrinting");
-  const cleanup=()=>{ document.body.classList.remove("estRepPrinting"); host.innerHTML=""; window.removeEventListener("afterprint",cleanup); };
-  window.addEventListener("afterprint",cleanup);
-  setTimeout(()=>{ try{ window.print(); }catch(e){ console.warn("[esteira] relatório:",e); cleanup(); } }, 60);
+  let conteudo="";
+  try{ conteudo=_estReportHTML(); }
+  catch(e){ console.warn("[esteira] relatório:",e); alert("Não foi possível montar o relatório."); return; }
+  const doc='<!doctype html><html lang="pt-br"><head><meta charset="utf-8"><title>Situação dos Projetos · NS ALOC</title><style>'+_estReportCSS()+'</style></head><body>'+conteudo+'</body></html>';
+  const w=window.open("","_blank");
+  if(!w){ alert("Não foi possível abrir o relatório. Permita pop-ups deste site e tente novamente."); return; }
+  try{
+    w.document.open(); w.document.write(doc); w.document.close();
+    const imprimir=()=>{ try{ w.focus(); w.print(); }catch(e){ console.warn("[esteira] print:",e); } };
+    if(w.document.readyState==="complete"){ setTimeout(imprimir,300); }
+    else { w.onload=()=>setTimeout(imprimir,150); setTimeout(imprimir,800); }
+  }catch(e){ console.warn("[esteira] relatório janela:",e); }
 }
 
 
