@@ -2406,3 +2406,33 @@ tr.crg-task.crg-forajan{background:#fff7f6}
 .gcl-sw.sw-atras{background:#c9ccd1;box-shadow:0 0 0 2px #d33a2c inset}
 .gcl-sw.sw-hoje{width:0;height:15px;border-radius:0;border-left:2px dashed #2563eb}
 .gcl-sw.sw-golive{width:0;height:15px;border-radius:0;border-left:2px solid #1f7a3d}
+
+/* ============================================================================
+   MULTI-ATIVIDADE NO MESMO SLOT · v1.98.0 (Fase 1)
+   Empilhamento vertical de até 4 chips numa mesma célula (slot-base). Só age
+   quando o wrapper .cell-stack existe (≥1 atividade extra); células de 1
+   atividade seguem idênticas (sem wrapper, sem efeito desta regra).
+   ============================================================================ */
+.cell-stack{display:flex;flex-direction:column;gap:2px;width:100%;height:100%}
+/* Override do height:100% do chip: dentro do empilhamento as ocorrências
+   dividem a altura da célula igualmente. */
+.cell-stack > .chip,
+.cell-stack > .gchip{
+  flex:1 1 0;min-height:0;height:auto;
+  padding:3px 8px;line-height:1.05;justify-content:center;
+}
+.cell-stack > .chip .cli,
+.cell-stack > .gchip .cli{font-size:11.5px}
+.cell-stack > .chip .atv,
+.cell-stack > .gchip .atv{font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Com 3+ atividades aperta a tipografia para caber sem cortar. */
+.cell-stack > .chip:nth-child(n+3),
+.cell-stack > .gchip:nth-child(n+3){padding:2px 8px}
+.cell-stack > .chip:nth-child(n+3) .cli,
+.cell-stack > .gchip:nth-child(n+3) .cli{font-size:10.5px}
+/* Fino divisor neutro entre atividades empilhadas. */
+.cell-stack > .chip + .chip,
+.cell-stack > .gchip + .gchip{border-top:1px solid rgba(0,0,0,.10)}
+/* Hover sem "pulo" individual: o realce continua sendo da célula inteira. */
+.cell:hover .cell-stack > .chip,
+.gcell:hover .cell-stack > .gchip{transform:none;box-shadow:none}
