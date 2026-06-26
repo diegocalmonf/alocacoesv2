@@ -136,6 +136,18 @@ const slotOcc =t=>{const s=String(t==null?"":t);const i=s.indexOf("~");return i<
 const slotTok =(base,n)=>{n=parseInt(n,10)||1;return n<=1?String(base):String(base)+"~"+n;};
 // Rótulo amigável de um token (base + marcador de ocorrência quando >1). Uso em títulos/atas.
 function slotLabel(t){const occ=slotOcc(t);return slotBase(t)+(occ>1?" · "+occ+"ª":"");}
+// Ocorrências OCUPADAS de um slot-base, em ordem (1..SLOT_MAX_OCC). [{occ,tok,r}]
+function _occupiedOccs(nome, iso, base){
+  const out=[];
+  for(let o=1;o<=SLOT_MAX_OCC;o++){ const tok=slotTok(base,o); const r=DATA[key(nome,iso,tok)]; if(r) out.push({occ:o, tok, r}); }
+  return out;
+}
+// Menor ocorrência LIVRE (sem registro) de um slot-base; 0 se cheio (4/4).
+// Como varre de baixo p/ cima, preenche o menor "buraco" e mantém contiguidade natural.
+function _proxOccLivre(nome, iso, base){
+  for(let o=1;o<=SLOT_MAX_OCC;o++){ if(!DATA[key(nome,iso,slotTok(base,o))]) return o; }
+  return 0;
+}
 
 /* ===================== CAMADA DE PRÉ-ALOCAÇÃO (previsto) · Fase 1 =====================
    Camada PARALELA ao DATA (realizado), com a MESMA chave key(c,iso,slot).
@@ -1699,7 +1711,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.98.0";
+const APP_VERSION = "1.99.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -3111,9 +3123,14 @@ function openAlloc(nomeOuIso,isoOuSlot,slotOuUndef){
   el("mAlterar").style.display = podeAlterar ? "" : "none";
   el("mAlterar").onclick = ()=>{closeAlloc(); openIncluirAloc({analista:nome, iso, slot, prefill:r||prev||null});};
   // "Liberar slot": só aparece quando há algo lançado E o usuário pode alterar.
-  // Devolve o slot para "Livre" removendo o registro (apagar a chave = ausência = livre).
+  // Multi-atividade: este botão libera a 1ª ocorrência (primária). Fica bloqueado
+  // enquanto existirem atividades extras (a contiguidade exige remover os extras antes).
+  const _obLib=slotBase(slot);
+  const _occN=_occupiedOccs(nome,iso,_obLib).length;
   el("mLiberar").style.display = (podeAlterar && r) ? "" : "none";
-  el("mLiberar").onclick = ()=>liberarSlot(nome, iso, slot);
+  el("mLiberar").disabled = !!(podeAlterar && r && _occN>1);
+  el("mLiberar").title = el("mLiberar").disabled ? "Remova as atividades extras deste slot antes de liberar a 1ª" : "";
+  el("mLiberar").onclick = ()=>liberarOcc(nome, iso, _obLib, 1);
   // ── Botão ATA (Fase 2): aparece quando a atividade exige ata OU já existe ata p/ o slot ──
   const ataBtn=el("mAta");
   if(ataBtn){
@@ -3135,6 +3152,11 @@ function openAlloc(nomeOuIso,isoOuSlot,slotOuUndef){
         lucideRefresh();
       });
     }
+  }
+  // Painel multi-atividade (Fase 2): lista de ocorrências do slot + "Adicionar atividade".
+  if(podeAlterar){
+    const ph=_painelOcorrenciasHTML(nome, iso, slotBase(slot));
+    if(ph){ el("consultBody").innerHTML += ph; _bindPainelOcorrencias(nome, iso, slotBase(slot)); }
   }
   el("overlay").classList.add("open");
   _bindTarefasSlot(nome, iso, slot);
@@ -3159,6 +3181,73 @@ function liberarSlot(nome, iso, slot){
   delete DATA[k];
   audit("allocation.delete", k, antigo, null, {note:"Slot liberado (atividade cancelada) — voltou a Livre"});
   saveAlloc(); renderAll(); closeAlloc();
+}
+
+/* Libera UMA ocorrência de um slot (multi-atividade · Fase 2). Remove o token exato
+   — sem compactar — para preservar o vínculo das atas (slotKey carrega a ocorrência).
+   Regra de contiguidade: a ocorrência 1 (primária) só pode ser liberada quando é a
+   única ocupada; assim a base nunca vira "buraco" e os stats por slot-base seguem
+   corretos. Extras (occ≥2) liberam direto. */
+function liberarOcc(nome, iso, base, occ){
+  if(!canIncluirAlocacao()){ alert("Apenas administradores e gestores podem liberar slots."); return; }
+  base=slotBase(base); occ=parseInt(occ,10)||1;
+  const tok=slotTok(base,occ), k=key(nome,iso,tok);
+  const antigo=DATA[k];
+  if(!antigo){ const rest0=_occupiedOccs(nome,iso,base); if(rest0.length) openAlloc(nome,iso,base); else closeAlloc(); return; }
+  if(occ===1 && _occupiedOccs(nome,iso,base).length>1){
+    alert("Este slot tem atividades adicionais. Remova as atividades extras antes de liberar a 1ª.");return;
+  }
+  const d=parseISO(iso);
+  const quando=`${fmtDM(d)}/${d.getFullYear()} · ${base}${occ>1?" · "+occ+"ª atividade":""}`;
+  const resumo=`${antigo.atividade||"—"}${antigo.cliente&&antigo.cliente!=="Livre"?" · "+antigo.cliente:""}`;
+  if(!confirm(`Liberar ${occ>1?"esta atividade":"este slot"} de ${nome} (${quando})?\n\nLançamento atual: ${resumo}\n\n${occ>1?"A atividade":"O slot"} voltará a ficar LIVRE. Esta ação fica registrada na auditoria.`))return;
+  delete DATA[k];
+  audit("allocation.delete", k, antigo, null, {note:`Ocorrência ${occ} liberada (multi-atividade)`});
+  saveAlloc(); renderAll();
+  const rest=_occupiedOccs(nome,iso,base);
+  if(rest.length) openAlloc(nome,iso,base); else closeAlloc();
+}
+
+/* HTML do painel "Atividades neste slot" (lista de ocorrências + botão "+ atividade").
+   Renderiza só quando há mais de uma ocorrência OU quando cabe adicionar a partir de uma
+   ocorrência 1 já preenchida. Os handlers são ligados em _bindPainelOcorrencias(). */
+function _painelOcorrenciasHTML(nome, iso, base){
+  const occs=_occupiedOccs(nome,iso,base);
+  const livre=_proxOccLivre(nome,iso,base);
+  const temPrimaria = occs.some(o=>o.occ===1);
+  const podeAdd = temPrimaria && livre>=2 && livre<=SLOT_MAX_OCC;
+  if(occs.length<=1 && !podeAdd) return "";   // nada a mostrar (slot simples)
+  const linhas=occs.map(o=>{
+    const cli=(o.r.cliente && o.r.cliente!=="Livre")?o.r.cliente:"";
+    const desc=`${enc(o.r.atividade||"—")}${cli?` · ${enc(cli)}`:""}`;
+    if(o.occ===1){
+      // A 1ª (primária) é gerenciada pelos botões Alterar/Liberar do rodapé do modal.
+      return `<div class="occ-row"><span class="occ-n">1ª</span><span class="occ-desc">${desc}</span><span class="occ-hint">botões acima</span></div>`;
+    }
+    const editBtn=`<button class="btn small occ-edit" data-occ="${o.occ}" title="Alterar esta atividade"><i data-lucide="pencil"></i></button>`;
+    const libBtn =`<button class="btn small occ-lib" data-occ="${o.occ}" title="Liberar esta atividade"><i data-lucide="trash-2"></i></button>`;
+    return `<div class="occ-row"><span class="occ-n">${o.occ}ª</span><span class="occ-desc">${desc}</span>${editBtn}${libBtn}</div>`;
+  }).join("");
+  const addBtn = podeAdd
+    ? `<button class="btn small occ-add" data-occ="${livre}"><i data-lucide="plus"></i> Adicionar atividade (${occs.length}/${SLOT_MAX_OCC})</button>`
+    : (occs.length>=SLOT_MAX_OCC ? `<div class="occ-cheio">Slot cheio (${SLOT_MAX_OCC}/${SLOT_MAX_OCC})</div>` : "");
+  return `<div class="occ-panel"><div class="occ-title">Atividades neste slot</div>${linhas}${addBtn}</div>`;
+}
+// Liga os botões do painel de ocorrências (liberar por ocorrência / adicionar atividade).
+function _bindPainelOcorrencias(nome, iso, base){
+  const body=el("consultBody"); if(!body) return;
+  body.querySelectorAll(".occ-lib").forEach(b=>b.addEventListener("click",()=>liberarOcc(nome,iso,base,+b.dataset.occ)));
+  body.querySelectorAll(".occ-edit").forEach(b=>b.addEventListener("click",()=>{
+    const occ=+b.dataset.occ, tok=slotTok(base,occ);
+    closeAlloc();
+    openIncluirAloc({analista:nome, iso, slot:base, extraTok:tok, extraEdit:true, prefill:DATA[key(nome,iso,tok)]||null});
+  }));
+  const add=body.querySelector(".occ-add");
+  if(add) add.addEventListener("click",()=>{
+    const occ=+add.dataset.occ;
+    closeAlloc();
+    openIncluirAloc({analista:nome, iso, slot:base, extraTok:slotTok(base,occ), prefill:null});
+  });
 }
 
 /* ===================== Atas · tela de geração/consulta (Fase 2) =====================
@@ -3707,6 +3796,23 @@ function openIncluirAloc(opts){
   // Avisos
   el("iAvisos").style.display="none"; el("iAvisos").innerHTML="";
   el("iBulkPanel").open=false;
+  // ── Modo "atividade extra" (multi-atividade no slot · Fase 2) ──
+  // Adiciona uma 2ª/3ª/4ª atividade a um slot que JÁ tem a 1ª. A célula fica
+  // travada (analista/data/slot) e o lote/ritual são ocultados — extras são por célula.
+  const _ex = opts.extraTok || null;
+  const _exDisabled = !!_ex;
+  el("iAnalista").disabled = _exDisabled;
+  el("iData").disabled = _exDisabled;
+  el("iSlot").disabled = _exDisabled;
+  el("iBulkPanel").style.display = _exDisabled ? "none" : "";
+  if(_ex){
+    const occ=slotOcc(_ex), base=slotBase(_ex);
+    const editando = !!opts.extraEdit;
+    el("iSlot").value = base;
+    el("iAvisos").innerHTML = `<i data-lucide="layers" class="icon-14"></i> ${editando?"Alterando":"Adicionando"} a <b>${occ}ª atividade</b> do <b>${enc(base)}</b> de <b>${enc(opts.analista||"")}</b>${editando?"":" — não sobrescreve a atividade existente."}`;
+    el("iAvisos").style.display="block";
+    el("iAvisos").style.color="var(--ink)";
+  }
   el("incOverlay").classList.add("open");
   lucideRefresh();
 }
@@ -3857,14 +3963,18 @@ function notificarAlocacao(o){
 
 function saveIncluirAloc(){
   const d=validarIncFields(); if(!d)return;
-  const k=key(d.an,d.iso,d.slot);
+  const ex = _incCtx && _incCtx.extraTok ? _incCtx.extraTok : null;   // token da ocorrência extra (ou null)
+  const exEdit = !!(_incCtx && _incCtx.extraEdit);                    // edição explícita de uma ocorrência existente
+  const slotW = ex || d.slot;                                         // slot/token efetivo de gravação
+  const k=key(d.an,d.iso,slotW);
   const antigo=DATA[k];
-  if(antigo && !confirm(`Já existe uma alocação para ${d.an} em ${fmtDM(parseISO(d.iso))}/${parseISO(d.iso).getFullYear()} · ${d.slot}:\n\n${antigo.atividade||"—"} · ${antigo.cliente||"—"}\n\nDeseja sobrescrever?`))return;
+  if(antigo && !exEdit && !confirm(`Já existe uma alocação para ${d.an} em ${fmtDM(parseISO(d.iso))}/${parseISO(d.iso).getFullYear()} · ${slotLabel(slotW)}:\n\n${antigo.atividade||"—"} · ${antigo.cliente||"—"}\n\nDeseja sobrescrever?`))return;
   const novo=montaRegistroInc(antigo,d);
   DATA[k]=novo;
-  audit(antigo?"allocation.update":"allocation.create", k, antigo||null, novo);
-  notificarAlocacao({tipo:"single", analista:d.an, atividade:d.atividade, projeto:d.cliente, slot:d.slot, quando:`${fmtDM(parseISO(d.iso))}/${parseISO(d.iso).getFullYear()}`, obs:d.obs});
+  audit(antigo?"allocation.update":"allocation.create", k, antigo||null, novo, ex?{note:`Atividade extra (${slotOcc(ex)}ª) no slot ${slotBase(ex)}`}:undefined);
+  notificarAlocacao({tipo:"single", analista:d.an, atividade:d.atividade, projeto:d.cliente, slot:slotLabel(slotW), quando:`${fmtDM(parseISO(d.iso))}/${parseISO(d.iso).getFullYear()}`, obs:d.obs});
   saveAlloc(); renderAll();
+  if(ex){ closeIncluirAloc(); return; }                              // modo extra: 1 atividade por vez
   // pergunta se quer incluir outra
   if(confirm("Alocação salva.\n\nDeseja incluir OUTRA alocação?\n\n• OK: limpa data/slot e mantém analista/atividade/projeto preenchidos\n• Cancelar: fecha o modal")){
     // limpa só data e slot (mantém o resto preenchido para repetição)
@@ -3885,6 +3995,7 @@ function saveIncluirAloc(){
 
 // Aplicar em lote (versão Inc)
 function applyDayInc(){
+  if(_incCtx&&_incCtx.extraTok){alert("Aplicação em lote não está disponível ao adicionar uma atividade extra a um slot.");return;}
   const d=validarIncFields(); if(!d)return;
   const slots=SLOTS.filter(s=>!s.lunch).map(s=>s.id);
   if(!confirm(`Aplicar "${d.atividade}" em todos os ${slots.length} slots do dia ${fmtDM(parseISO(d.iso))}/${parseISO(d.iso).getFullYear()} para ${d.an}?\n\nSlots já preenchidos serão sobrescritos.`))return;
@@ -3896,6 +4007,7 @@ function applyDayInc(){
   closeIncluirAloc();
 }
 function applyWeekInc(){
+  if(_incCtx&&_incCtx.extraTok){alert("Aplicação em lote não está disponível ao adicionar uma atividade extra a um slot.");return;}
   const d=validarIncFields(); if(!d)return;
   const ws=monday(parseISO(d.iso));
   for(let i=0;i<5;i++){const iso=toISO(addDays(ws,i));const antigo=DATA[key(d.an,iso,d.slot)];
@@ -3907,6 +4019,7 @@ function applyWeekInc(){
   closeIncluirAloc();
 }
 function applyRangeInc(){
+  if(_incCtx&&_incCtx.extraTok){alert("Aplicação em lote não está disponível ao adicionar uma atividade extra a um slot.");return;}
   const d=validarIncFields(); if(!d)return;
   const from=el("iRangeFrom").value, to=el("iRangeTo").value;
   if(!from||!to){alert("Informe as datas De e Até.");return;}
@@ -3990,6 +4103,7 @@ function updateRitualPreview(){
 }
 
 function applyRitualInc(){
+  if(_incCtx&&_incCtx.extraTok){alert("Ritual/recorrência não está disponível ao adicionar uma atividade extra a um slot.");return;}
   const d=validarIncBaseFields(); if(!d)return;
   if(!_ritualDows.size){alert("Selecione ao menos um dia da semana para o ritual.");return;}
   const from=el("iRitualFrom").value, to=el("iRitualTo").value;
