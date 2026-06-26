@@ -5684,6 +5684,89 @@ function _pvAplicar(p){
   });
 }
 
+/* ===================== ZERAR CRONOGRAMA (admin \u00b7 D1=b) =====================
+   Remove TODO o previsto deste projeto da grade (PREV origem "projeto:<nome>") e zera a
+   estrutura do cronograma (previstoLinhas, previstoAplicadoEm, baselineCronograma). D2: remove
+   junto o realizado (DATA) do projeto SEM marca de execu\u00e7\u00e3o (preserva c\u00e9lulas com obs = execu\u00e7\u00e3o
+   real). D3: reverte as datas de etapa da Esteira auto-setadas pelo cronograma reutilizando
+   _esteiraAlimentarDoCronograma com previstoLinhas vazio (provenance _estCrono), preservando
+   ajustes manuais. A\u00e7\u00e3o irrevers\u00edvel, admin-only. */
+function _coletarPrevDoProjeto(projNome){
+  const tag="projeto:"+projNome; const out=[];
+  Object.keys(PREV).forEach(k=>{ const pv=PREV[k]; if(pv&&pv.origem===tag){ const p=k.split("__"); out.push({k,c:p[0],iso:p[1],slot:p.slice(2).join("__")}); } });
+  out.sort((a,b)=>a.iso.localeCompare(b.iso)||a.c.localeCompare(b.c,"pt"));
+  return out;
+}
+function _coletarRealizadoDoProjeto(projNome){
+  const alvo=[], preservados=[];
+  Object.keys(DATA).forEach(k=>{
+    const r=DATA[k]; if(!r||ehSlotLivre(r)||r.feriado) return;
+    if(_normProj(r.cliente)!==_normProj(projNome)) return;
+    const p=k.split("__"); const cel={k,c:p[0],iso:p[1],slot:p.slice(2).join("__")};
+    if(r.obs||r.obsAt||r.obsBy||r.obsPendente){ preservados.push(cel); return; }   // execu\u00e7\u00e3o real \u2192 preserva
+    alvo.push(cel);
+  });
+  return {alvo, preservados};
+}
+function abrirLimparCronograma(){
+  if(!isAdmin()){ alert("Apenas administradores podem limpar o cronograma."); return; }
+  const p=_pvLiveProj();
+  if(!p||!p.nome){ alert("Selecione um projeto no Cronograma antes de limpar."); return; }
+  const old=el("zerarOverlay"); if(old)old.remove();
+  const ov=document.createElement("div"); ov.id="zerarOverlay"; ov.className="imp-overlay";
+  ov.innerHTML=`<div class="imp-modal">
+    <div class="imp-head"><div><b>Limpar cronograma (admin)</b><div class="imp-sub">Projeto: <b>${enc(p.nome)}</b> \u00b7 zera previsto da grade + estrutura do cronograma</div></div><button class="imp-x" id="zerClose">\u00d7</button></div>
+    <div class="imp-body">
+      <div class="imp-warn"><b>A\u00e7\u00e3o irrevers\u00edvel.</b> Remove TODO o previsto deste projeto da grade, apaga a sequ\u00eancia de atividades/tarefas do cronograma, descongela a baseline e reverte as datas de etapa da Esteira que vieram do cronograma (ajustes manuais s\u00e3o preservados).</div>
+      <div class="imp-row"><label><input type="checkbox" id="zerReal" checked> Remover tamb\u00e9m o realizado deste projeto (preserva c\u00e9lulas com observa\u00e7\u00e3o)</label></div>
+      <div class="imp-row"><span class="imp-counts" id="zerResumo">Calculando\u2026</span></div>
+      <div id="zerAmostra" class="imp-warn" style="max-height:150px;overflow:auto"></div>
+    </div>
+    <div class="imp-foot"><button class="btn" id="zerCancel">Cancelar</button><button class="btn primary" id="zerDo"><i data-lucide="trash-2"></i> Zerar cronograma</button></div>
+  </div>`;
+  document.body.appendChild(ov);
+  const close=()=>ov.remove();
+  el("zerClose").onclick=close; el("zerCancel").onclick=close;
+  ov.addEventListener("click",e=>{ if(e.target===ov)close(); });
+  let _prev=[], _real={alvo:[],preservados:[]};
+  function recomputar(){
+    el("zerResumo").textContent="Carregando hist\u00f3rico completo\u2026";
+    _garantirHistoricoTudo().then(()=>{
+      _prev=_coletarPrevDoProjeto(p.nome);
+      _real=_coletarRealizadoDoProjeto(p.nome);
+      const nLin=(p.previstoLinhas||[]).length;
+      const remReal=el("zerReal").checked;
+      const partes=[`<b>${_prev.length}</b> previsto(s) na grade`, `<b>${nLin}</b> linha(s) do cronograma`];
+      if(remReal) partes.push(`<b>${_real.alvo.length}</b> realizado(s)`);
+      el("zerResumo").innerHTML="\u2192 remover: "+partes.join(" \u00b7 ");
+      const av=[];
+      if(remReal && _real.preservados.length) av.push(`<b>${_real.preservados.length}</b> realizado(s) com observa\u00e7\u00e3o ser\u00e3o <b>preservados</b> (execu\u00e7\u00e3o real).`);
+      const amostra=_prev.slice(0,10).map(x=>`${enc(x.c)} \u00b7 ${x.iso} \u00b7 ${enc(x.slot)}`).join("<br>");
+      av.push(amostra?(amostra+(_prev.length>10?`<br>\u2026 e mais ${_prev.length-10} previsto(s)`:"")):"Nenhum previsto na grade para este projeto.");
+      el("zerAmostra").innerHTML=av.join("<br>");
+    }).catch(e=>{ el("zerResumo").textContent="Falha ao carregar hist\u00f3rico: "+(e&&e.message||e); });
+  }
+  el("zerReal").addEventListener("change",recomputar); recomputar();
+  el("zerDo").addEventListener("click",()=>{
+    const remReal=el("zerReal").checked;
+    const nLin=(p.previstoLinhas||[]).length;
+    if(!_prev.length && !nLin && !(remReal&&_real.alvo.length)){ alert("Nada a remover neste projeto."); return; }
+    const msg=`Zerar o cronograma de "${p.nome}"?\n\n\u2022 ${_prev.length} previsto(s) na grade\n\u2022 ${nLin} linha(s) do cronograma\n\u2022 baseline descongelada`+(remReal?`\n\u2022 ${_real.alvo.length} realizado(s) (preserva ${_real.preservados.length} com observa\u00e7\u00e3o)`:``)+`\n\nEsta a\u00e7\u00e3o \u00e9 irrevers\u00edvel.`;
+    if(!confirm(msg)) return;
+    _prev.forEach(x=>{ delete PREV[x.k]; });
+    if(remReal) _real.alvo.forEach(x=>{ delete DATA[x.k]; });
+    if(Array.isArray(p.previstoLinhas)) p.previstoLinhas.length=0; else p.previstoLinhas=[];
+    _prevTabLinhas=p.previstoLinhas;
+    p.previstoAplicadoEm=""; p.baselineCronograma=null;
+    try{ _esteiraAlimentarDoCronograma(p); }catch(e){}   // D3: reverte datas de etapa auto-setadas, preserva manuais
+    persist(); persistPrev();
+    try{ audit("project.cronograma.zerar", p.nome, null, {previstos:_prev.length, linhas:nLin, realizados:remReal?_real.alvo.length:0, realizadosPreservados:remReal?_real.preservados.length:0}); }catch(e){}
+    close(); _cronRefresh(); renderAll();
+    alert(`Cronograma de "${p.nome}" zerado.\n\n\u2022 ${_prev.length} previsto(s) removidos da grade\n\u2022 ${nLin} linha(s) do cronograma apagadas`+(remReal?`\n\u2022 ${_real.alvo.length} realizado(s) removidos`:``)+`\n\nPronto para remontar do zero.`);
+  });
+  lucideRefresh();
+}
+
 /* ===================== IMPORTAÇÃO DE CRONOGRAMA (CSV · Fase 6a) =====================
    Importa um WBS exportado de outro sistema (Atividade;Início;Término), reconstruindo a
    hierarquia pela numeração. O usuário escolhe qual NÍVEL vira "atividade" (I1=c); os níveis
@@ -6208,7 +6291,7 @@ function renderCronograma(){
   const toggleHTML=p?`<div class="cron-viewtoggle" role="tablist" aria-label="Modo de visualização">
       <button class="cvt-btn ${!isGantt?'on':''}" id="cronViewLista" role="tab" aria-selected="${!isGantt}"><i data-lucide="list"></i> Lista</button>
       <button class="cvt-btn ${isGantt?'on':''}" id="cronViewGantt" role="tab" aria-selected="${isGantt}"><i data-lucide="gantt-chart"></i> Gantt</button>
-    </div>${canEditAction("cronograma")?`<button class="cvt-btn cron-import" id="cronCopyBtn" title="Copiar a estrutura do cronograma de outro projeto"><i data-lucide="copy"></i> Copiar de…</button><button class="cvt-btn cron-import" id="cronImportBtn" title="Importar cronograma de um CSV"><i data-lucide="upload"></i> Importar CSV</button>`:""}${isAdmin()?`<button class="cvt-btn cron-import" id="cronLimparBtn" title="Limpar realizado plantado automaticamente (somente admin)"><i data-lucide="eraser"></i> Limpar slots</button>`:""}`:"";
+    </div>${canEditAction("cronograma")?`<button class="cvt-btn cron-import" id="cronCopyBtn" title="Copiar a estrutura do cronograma de outro projeto"><i data-lucide="copy"></i> Copiar de…</button><button class="cvt-btn cron-import" id="cronImportBtn" title="Importar cronograma de um CSV"><i data-lucide="upload"></i> Importar CSV</button>`:""}${isAdmin()?`<button class="cvt-btn cron-import" id="cronLimparBtn" title="Limpar realizado plantado automaticamente (somente admin)"><i data-lucide="eraser"></i> Limpar slots</button><button class="cvt-btn cron-import" id="cronZerarBtn" title="Zerar todo o previsto e a estrutura do cronograma deste projeto (somente admin)"><i data-lucide="trash-2"></i> Limpar cronograma</button>`:""}`:"";
   const corpo=p
     ? (isGantt?_cronGanttHTML(p):_previstoTabHTML(p))
     : `<div class="hint" style="padding:16px">Escolha um projeto acima para ver e editar o cronograma.</div>`;
@@ -6238,6 +6321,7 @@ function renderCronograma(){
   const bImp=el("cronImportBtn"); if(bImp)bImp.addEventListener("click",abrirImportCronograma);
   const bCopy=el("cronCopyBtn"); if(bCopy)bCopy.addEventListener("click",abrirCopiarCronograma);
   const bLimp=el("cronLimparBtn"); if(bLimp)bLimp.addEventListener("click",abrirLimparSlots);
+  const bZerar=el("cronZerarBtn"); if(bZerar)bZerar.addEventListener("click",abrirLimparCronograma);
   if(p && !isGantt) _bindCronograma(p);
   if(p && isGantt && !_cronEvolReady){
     _garantirHistoricoTudo().then(()=>{ _cronEvolReady=true; if(_cronView==="gantt"&&_cronProjNome===p.nome) renderCronograma(); });
