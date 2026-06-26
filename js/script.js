@@ -120,6 +120,23 @@ let refDate=null;          // dia de referência (para dia/mês)
 let form={atividade:"Implantação", cliente:"", outro:""};
 const key=(c,iso,slot)=>c+"__"+iso+"__"+slot;
 
+/* ===================== MULTI-ATIVIDADE NO MESMO SLOT (v1.98.0 · Fase 1) =====================
+   Um slot longo (ex.: Slot2 = 2h) pode receber até SLOT_MAX_OCC atividades curtas.
+   Modelo: SUB-ÍNDICE no TOKEN do slot, separador "~". A CHAVE continua com 3 segmentos
+   (c__iso__token), então TODO split("__") existente segue correto — o token é que muda.
+     ocorrência 1 (primária): token "Slot2"     → chave c__iso__Slot2     (idêntica a hoje)
+     ocorrências 2..4:        token "Slot2~2/~3/~4"
+   "~" é seguro: não está em _encBucketKey (que só escapa % . # $ / [ ] + controles) nem na
+   lista proibida do RTDB; round-trip de bucket limpo (c/iso/slot vão no valor).
+   Invariantes preservados: "Livre = ausência de dado" (extra inexistente = sem registro),
+   o registro primário é byte-idêntico ao de hoje, e a escrita granular por célula continua. */
+const SLOT_MAX_OCC=4;                                  // até 4 atividades por slot
+const slotBase=t=>{const s=String(t==null?"":t);const i=s.indexOf("~");return i<0?s:s.slice(0,i);};
+const slotOcc =t=>{const s=String(t==null?"":t);const i=s.indexOf("~");return i<0?1:(parseInt(s.slice(i+1),10)||1);};
+const slotTok =(base,n)=>{n=parseInt(n,10)||1;return n<=1?String(base):String(base)+"~"+n;};
+// Rótulo amigável de um token (base + marcador de ocorrência quando >1). Uso em títulos/atas.
+function slotLabel(t){const occ=slotOcc(t);return slotBase(t)+(occ>1?" · "+occ+"ª":"");}
+
 /* ===================== CAMADA DE PRÉ-ALOCAÇÃO (previsto) · Fase 1 =====================
    Camada PARALELA ao DATA (realizado), com a MESMA chave key(c,iso,slot).
    Mantém o invariante "ausência de dado = nada planejado": um slot sem registro
@@ -434,7 +451,7 @@ function gradeProjetoCells(proj){
     if(foraDoEscopoAtual(r)) continue; // não revela projeto de outro GP
     out.push({nome,iso,slot,r});
   }
-  const slotOrd=s=>{const i=SLOTS.findIndex(x=>x.id===s);return i<0?99:i;};
+  const slotOrd=s=>{const i=SLOTS.findIndex(x=>x.id===slotBase(s));return (i<0?99:i)+(slotOcc(s)-1)*0.01;};
   out.sort((a,b)=> a.nome.localeCompare(b.nome,"pt") || a.iso.localeCompare(b.iso) || slotOrd(a.slot)-slotOrd(b.slot));
   return out;
 }
@@ -1682,7 +1699,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.97.0";
+const APP_VERSION = "1.98.0";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -1951,6 +1968,32 @@ function _decorarPrevisto(nome, iso, slot, inner, cat, fn, locked, classe){
   if(cat!=="empty" && !locked && (st==="conflito"||st==="confirmado"||st==="extra"||st==="atividadeDivergente")) return comMarcador(inner,st,nome,iso,slot);
   return inner;
 }
+/* Constrói o innerHTML de UMA célula da grade (slot-base), reunindo as ocorrências
+   1..SLOT_MAX_OCC. A ocorrência 1 (base) usa EXATAMENTE a lógica de hoje (fora-escopo,
+   chip, feriado, vazio, decoração de previsto). As ocorrências 2..4 entram só como chips
+   reais empilhados. COMPATIBILIDADE: sem extras (estado de produção até a Fase 2), o
+   retorno é byte-idêntico ao código inline anterior — nenhum wrapper é adicionado.
+   classe = "chip" (visão analista/geral-resumo) ou "gchip" (geral-dia).
+   Retorna {inner, locked} — locked é governado pela ocorrência base, como antes. */
+function _cellInner(nome, iso, base, fn, classe){
+  const k1=key(nome,iso,base);
+  const r=DATA[k1]; const cat=categoria(r);
+  let inner, locked=false;
+  if(cat!=="empty" && foraDoEscopoAtual(r)){ inner=chipForaEscopoHTML(classe); locked=true; }
+  else if(cat!=="empty") inner=chipHTML(cat,r,classe,k1);
+  else if(fn) inner=`<div class="${classe} c-aus"><span class="cli">${fn}</span>${classe==="chip"?'<span class="atv">Feriado</span>':""}</div>`;
+  else inner=(classe==="gchip")?`<div class="${classe} empty"></div>`:`<div class="${classe} empty"><span class="plus">+</span></div>`;
+  inner=_decorarPrevisto(nome,iso,base,inner,cat,fn,locked,classe);
+  // Ocorrências extras (2..SLOT_MAX_OCC): só chips reais, empilhados sob a base.
+  let extras="";
+  for(let o=2;o<=SLOT_MAX_OCC;o++){
+    const k=key(nome,iso,slotTok(base,o)); const re=DATA[k];
+    if(!re || ehSlotLivre(re)) continue;
+    extras += foraDoEscopoAtual(re) ? chipForaEscopoHTML(classe) : chipHTML(categoria(re),re,classe,k);
+  }
+  if(extras) inner=`<div class="cell-stack">${inner}${extras}</div>`;
+  return {inner, locked};
+}
 // Conta conflitos presentes na memória atual (janela carregada) — para o badge.
 function _contarConflitosMem(){
   let n=0;
@@ -2119,13 +2162,7 @@ function renderBoardAnalista(){
     if(s.lunch){body+=`<tr class="lunch"><td>·</td><td colspan="${days.length}">Almoço · ${s.time}</td></tr>`;return;}
     body+=`<tr><td class="slot-label"><div class="sname">${s.id}</div><div class="stime mono">${s.time}</div></td>`;
     days.forEach(d=>{const iso=toISO(d);const isT=iso===todayISO;const fn=fer[iso];const wknd=d.getDay()===0||d.getDay()===6;
-      const r=DATA[key(consultor,iso,s.id)];const cat=categoria(r);
-      let inner, locked=false;
-      if(cat!=="empty" && foraDoEscopoAtual(r)){inner=chipForaEscopoHTML("chip");locked=true;}
-      else if(cat!=="empty")inner=chipHTML(cat,r,"chip",key(consultor,iso,s.id));
-      else if(fn)inner=`<div class="chip c-aus"><span class="cli">${fn}</span><span class="atv">Feriado</span></div>`;
-      else inner=`<div class="chip empty"><span class="plus">+</span></div>`;
-      inner=_decorarPrevisto(consultor,iso,s.id,inner,cat,fn,locked,"chip");
+      const {inner, locked}=_cellInner(consultor,iso,s.id,fn,"chip");
       body+=`<td class="cell${isT?" is-today-col":""}${fn?" is-holiday-col":""}${wknd?" wknd":""}${locked?" locked":""}" data-nome="${enc(consultor)}" data-iso="${iso}" data-slot="${s.id}"${locked?' data-locked="1"':""}>${inner}</td>`;});
     body+=`</tr>`;
   });
@@ -2143,13 +2180,8 @@ function renderGeralDia(){
   ns.forEach(n=>{
     const l=liderDe(n);
     body+=`<tr><td class="ganalyst"><div class="gn"><span class="gav" style="background:${colorFor(n)}">${(n[0]||'?').toUpperCase()}</span>${n}</div>${l?`<div class="gl">${l}</div>`:""}</td>`;
-    work.forEach(s=>{const r=DATA[key(n,iso,s.id)];const cat=categoria(r);
-      let inner, locked=false;
-      if(cat!=="empty" && foraDoEscopoAtual(r)){inner=chipForaEscopoHTML("gchip");locked=true;}
-      else if(cat!=="empty")inner=chipHTML(cat,r,"gchip",key(n,iso,s.id));
-      else if(fn)inner=`<div class="gchip c-aus"><span class="cli">${fn}</span></div>`;
-      else inner=`<div class="gchip empty"></div>`;
-      inner=_decorarPrevisto(n,iso,s.id,inner,cat,fn,locked,"gchip");
+    work.forEach(s=>{
+      const {inner, locked}=_cellInner(n,iso,s.id,fn,"gchip");
       body+=`<td class="gcell${locked?" locked":""}" data-nome="${enc(n)}" data-iso="${iso}" data-slot="${s.id}"${locked?' data-locked="1"':""}>${inner}</td>`;});
     body+=`</tr>`;
   });
@@ -2192,13 +2224,7 @@ function renderGeralResumo(){
       if(s.lunch){body+=`<tr class="lunch"><td>·</td><td colspan="${days.length}">Almoço · ${s.time}</td></tr>`;return;}
       body+=`<tr><td class="slot-label"><div class="sname">${s.id}</div><div class="stime mono">${s.time}</div></td>`;
       days.forEach(d=>{const iso=toISO(d);const isT=iso===todayISO;const fn=fer[iso];const wknd=d.getDay()===0||d.getDay()===6;
-        const r=DATA[key(n,iso,s.id)];const cat=categoria(r);
-        let inner, locked=false;
-        if(cat!=="empty" && foraDoEscopoAtual(r)){inner=chipForaEscopoHTML("chip");locked=true;}
-        else if(cat!=="empty")inner=chipHTML(cat,r,"chip",key(n,iso,s.id));
-        else if(fn)inner=`<div class="chip c-aus"><span class="cli">${fn}</span><span class="atv">Feriado</span></div>`;
-        else inner=`<div class="chip empty"><span class="plus">+</span></div>`;
-        inner=_decorarPrevisto(n,iso,s.id,inner,cat,fn,locked,"chip");
+        const {inner, locked}=_cellInner(n,iso,s.id,fn,"chip");
         body+=`<td class="cell${isT?" is-today-col":""}${fn?" is-holiday-col":""}${wknd?" wknd":""}${locked?" locked":""}" data-nome="${enc(n)}" data-iso="${iso}" data-slot="${s.id}"${locked?' data-locked="1"':""}>${inner}</td>`;
       });
       body+=`</tr>`;
@@ -2496,7 +2522,7 @@ function _torreResumoAlocacoesProjetoPeriodo(alocs){
 function _torreClassificarAlerta(ev, alocs, conflitos, periodo){
   const dias=_torreDiasAte(ev.iso);
   const diasCobertos=new Set((alocs||[]).map(a=>a.data)).size;
-  const slots=(alocs||[]).length;
+  const slots=new Set((alocs||[]).map(a=>a.analista+"|"+a.data+"|"+slotBase(a.slot))).size;
   const necessarios=(periodo&&periodo.necessarios)||1;
   if((conflitos||[]).length) return {criticidade:"crit", tipo:"Conflito de slot", dias, diasCobertos, slots, necessarios, motivo:"Existe sobreposição no mesmo analista, mesma data e mesmo slot."};
   if(!diasCobertos){
@@ -2562,10 +2588,11 @@ function _torreAnalistasAlocadosProjetoDia(projetoNome, iso){
   return [...new Set(_torreAlocacoesProjetoDia(projetoNome, iso).map(a=>a.analista).filter(Boolean))];
 }
 function _torreSlotNome(slotId){
-  const s=(SLOTS||[]).find(x=>x.id===slotId);
-  if(!s) return slotId || "—";
-  const nome=s.nome||s.name||s.label||s.id||slotId||"Slot";
-  return `${nome}${s.time?" ("+s.time+")":""}`;
+  const base=slotBase(slotId), occ=slotOcc(slotId);
+  const s=(SLOTS||[]).find(x=>x.id===base);
+  const nome=s?(s.nome||s.name||s.label||s.id||base):(base||slotId||"Slot");
+  const suf=occ>1?` · ${occ}ª`:"";
+  return `${nome}${s&&s.time?" ("+s.time+")":""}${suf}`;
 }
 function _torreResumoAlocacoesProjetoDia(projetoNome, iso){
   const alocs=_torreAlocacoesProjetoDia(projetoNome, iso);
@@ -3018,8 +3045,8 @@ function openAlloc(nomeOuIso,isoOuSlot,slotOuUndef){
   const r=DATA[key(nome,iso,slot)];
   const prev=PREV[key(nome,iso,slot)]||null;   // previsto (planejado) — exibido quando NÃO há realizado
   const d=parseISO(iso);
-  el("mTitle").innerHTML=`<i data-lucide="info"></i>${enc(nome)} · ${enc(slot)}`;
-  const subBase=DOW[d.getDay()]+", "+fmtDM(d)+"/"+d.getFullYear()+" · "+(SLOTS.find(s=>s.id===slot)||{}).time;
+  el("mTitle").innerHTML=`<i data-lucide="info"></i>${enc(nome)} · ${enc(slotLabel(slot))}`;
+  const subBase=DOW[d.getDay()]+", "+fmtDM(d)+"/"+d.getFullYear()+" · "+((SLOTS.find(s=>s.id===slotBase(slot))||{}).time||"");
   el("mSub").textContent=subBase;
   const body=el("consultBody");
   if(!r){
@@ -3186,7 +3213,7 @@ function _renderAtaForm(nome, iso, slot, ata){
   const impressa=!!(ata&&ata.impressa);
   const gp = impressa ? (ata.gp||"") : (projCad&&projCad.gp||"");        // congelado se impressa; senão ao vivo
   const lider = impressa ? (ata.lider||"") : (projCad&&projCad.lider||"");
-  const horario=((SLOTS.find(s=>s.id===slot)||{}).time)||"";
+  const horario=((SLOTS.find(s=>s.id===slotBase(slot))||{}).time)||"";
   const d=parseISO(iso);
   const dataFmt=DOW[d.getDay()]+", "+fmtDM(d)+"/"+d.getFullYear();
   const podeEditar=canEditAction("atas") && !impressa;
