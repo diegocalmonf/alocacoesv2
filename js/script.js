@@ -1711,7 +1711,7 @@ const el=id=>document.getElementById(id);
 // Considera "ativo agora" se a flag for true OU se ainda não foi setada (default = true)
 const isAtivo=item=>!item||item.ativo!==false;
 // Versão atual do app (hardcoded — atualizar a cada release significativa)
-const APP_VERSION = "1.100.2";
+const APP_VERSION = "1.100.3";
 function versaoAtual(){return APP_VERSION;}
 // Para uso histórico: o item estava ativo em determinada data (string ISO)?
 function isAtivoEm(item,iso){
@@ -11123,7 +11123,7 @@ function _estReportHTML(){
 /* CSS self-contained do relatório (vai inline na janela de impressão — não depende do style.css). */
 function _estReportCSS(){
   return ''
-  +'@page{ size:A4 landscape; margin:10mm; }'
+  +'@page{ size:297mm 210mm; margin:10mm; }'
   +'*{box-sizing:border-box} html,body{margin:0;padding:0;background:#fff}'
   +".estrep{font-family:'Inter',Arial,Helvetica,sans-serif;color:#14110f;font-size:9px;line-height:1.3;-webkit-print-color-adjust:exact;print-color-adjust:exact}"
   +'.estrep .er-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:2px solid #E55810;padding-bottom:8px;margin-bottom:8px}'
